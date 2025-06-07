@@ -10,9 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@genkit-ai/googleai": "^1.11.1",
-    "genkit": "^1.11.1",
+    "@google/generative-ai": "^0.24.1",
+    "@tomtom-international/web-sdk-maps": "^6.25.0",
+    "@tomtom-international/web-sdk-services": "^6.25.0",
     "lucide-react": "^0.344.0",
+    "openai": "^5.1.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.22.3",
