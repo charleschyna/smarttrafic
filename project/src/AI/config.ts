@@ -1,19 +1,17 @@
-import OpenAI from 'openai';
+/**
+ * The configuration for the AI services using OpenRouter.
+ * It is recommended to use environment variables for all sensitive data.
+ */
+export const aiConfig = {
+  apiKey: import.meta.env.VITE_OPENROUTER_API_KEY || '',
+  baseURL: 'https://openrouter.ai/api/v1',
+  siteUrl: import.meta.env.VITE_SITE_URL,
+  siteName: import.meta.env.VITE_SITE_NAME,
+};
 
-// Initialize the AI configuration
-export const getAI = () => {
-  try {
-    const apiKey = import.meta.env.VITE_OPENAI_API_KEY;
-    if (!apiKey) {
-      throw new Error('OpenAI API key is not defined in environment variables');
-    }
-    
-    return new OpenAI({
-      apiKey,
-      dangerouslyAllowBrowser: true // Enable client-side usage
-    });
-  } catch (error) {
-    console.error('Error initializing AI:', error);
-    throw new Error('Failed to initialize AI service');
-  }
-}; 
+// A check to provide a clear error message during development if the key is missing.
+if (!aiConfig.apiKey) {
+  console.error(
+    'OpenRouter API key is not set. Please add VITE_OPENROUTER_API_KEY to your .env file.'
+  );
+} 
