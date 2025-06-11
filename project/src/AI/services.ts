@@ -20,47 +20,37 @@ async function getRealTrafficData(location: { lat: number; lng: number }, radius
 
 // Generate traffic insights for a given location and radius
 export async function generateTrafficInsights(
-  location: { lat: number; lng: number },
-  radius: number
-): Promise<AIResponse<TrafficInsight[]>> {
+  location: { lat: number; lng: number; address?: string },
+  radius: number // This is unused now, but we'll keep it for API consistency
+): Promise<AIResponse<any>> {
   try {
-    const trafficData = await getRealTrafficData(location, radius);
-    
-    const prompt = `You are a world-class traffic analysis AI. Based on the real-time traffic data below, provide critical and actionable insights.
-      
-      Traffic Data:
-      ${JSON.stringify(trafficData, null, 2)}
-      
-      Your response MUST be a valid JSON object containing a single key "insights", which is an array of objects.
-      Each object in the "insights" array must follow this exact format:
-      {
-        "severity": "critical" | "warning" | "info",
-        "message": "A concise, human-readable description of the situation.",
-        "type": "congestion" | "incident" | "construction" | "weather" | "other",
-        "details": "A more detailed explanation of the causes and potential impacts.",
-        "location": {
-          "lat": <latitude>,
-          "lng": <longitude>,
-          "address": "A recognizable street name or area, if available."
-        }
-      }
-      Focus on the most significant events. If there are no significant events, return an empty array for the "insights" key. Do not invent data.`;
+    const locationHint = location.address 
+      ? `The user's location is near: ${location.address}.` 
+      : `The user is at an unspecified location.`;
 
-    const aiResponse = await getAIChatCompletion('openai/gpt-4o', prompt, true);
+    const prompt = `You are a world-class traffic analysis AI. Based on the user's location, provide a detailed, three-paragraph summary of the current and predicted traffic conditions.
+
+The user is at precise coordinates Latitude: ${location.lat}, Longitude: ${location.lng}.
+${locationHint}
+
+Your response should be a well-written narrative.
+- **Paragraph 1:** Start with a general overview of the traffic in the area ("Traffic in downtown Springfield is currently moderate..."). Mention the current average commute time and how it compares to the norm.
+- **Paragraph 2:** Detail any specific incidents, congestion hotspots, or construction zones. Mention specific street names if possible (e.g., "There is heavy congestion near the North Bridge due to a minor accident on Oak Ave..."). Be specific about the impact.
+- **Paragraph 3:** Provide a short-term forecast. What can drivers expect in the next hour or two? Mention if conditions are expected to improve, worsen, or stay the same, and why (e.g., "Looking ahead, congestion is expected to ease over the next hour as rush hour subsides...").
+
+Your entire response should be plain text, formatted into three distinct paragraphs.`;
+
+    // We no longer require a JSON object, so jsonMode is false.
+    const aiResponse = await getAIChatCompletion('openai/gpt-4o', prompt, false);
 
     if (!aiResponse) {
       throw new Error('Received an empty response from the AI service.');
     }
-
-    const parsedResponse = JSON.parse(aiResponse);
     
-    if (!parsedResponse.insights || !Array.isArray(parsedResponse.insights)) {
-      throw new Error('AI response is not in the expected format.');
-    }
-
+    // The data is now expected to be a string.
     return {
       success: true,
-      data: parsedResponse.insights,
+      data: aiResponse,
     };
   } catch (error) {
     console.error('Error generating traffic insights:', error);

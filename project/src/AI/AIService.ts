@@ -25,6 +25,7 @@ function getOpenAIClient(): OpenAI {
       'HTTP-Referer': siteURL,
       'X-Title': siteTitle,
     },
+    dangerouslyAllowBrowser: true,
   });
 
   return openai;
@@ -51,6 +52,7 @@ export async function getAIChatCompletion(
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1, 
     response_format: jsonMode ? { type: 'json_object' } : undefined,
+    max_tokens: 2048,
   });
 
   const content = completion.choices[0]?.message?.content;

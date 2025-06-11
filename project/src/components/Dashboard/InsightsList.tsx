@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
-import { AlertTriangle, AlertCircle, Info, MapPin, Search, RefreshCw } from 'lucide-react';
+import { MapPin, Search, RefreshCw, FileText } from 'lucide-react';
 import { generateTrafficInsights } from '../../AI/services';
-import type { TrafficInsight } from '../../AI/types';
 
 interface Location {
   lat: number;
@@ -9,17 +8,13 @@ interface Location {
   address?: string;
 }
 
-interface Insight extends TrafficInsight {
-  id: string;
-  timestamp: string;
-}
-
 const InsightsList: React.FC = () => {
-  const [insights, setInsights] = useState<Insight[]>([]);
+  // State now holds the string summary
+  const [trafficSummary, setTrafficSummary] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<Location | null>(null);
-  const [searchRadius, setSearchRadius] = useState(5); // in kilometers
+  const [searchRadius, setSearchRadius] = useState(5); // Kept for consistency, but not used by new prompt
   const [searchAddress, setSearchAddress] = useState('');
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
@@ -36,15 +31,16 @@ const InsightsList: React.FC = () => {
               `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`
             );
             const data = await response.json();
+            const address = data.display_name || 'Current Location';
             setUserLocation({
               lat: latitude,
               lng: longitude,
-              address: data.display_name
+              address: address
             });
-            setSearchAddress(data.display_name);
+            setSearchAddress(address);
           } catch (err) {
             console.error('Error getting address:', err);
-            setUserLocation({ lat: latitude, lng: longitude });
+            setUserLocation({ lat: latitude, lng: longitude, address: 'Current Location' });
           }
           setIsAutoDetecting(false);
         },
@@ -69,22 +65,18 @@ const InsightsList: React.FC = () => {
 
     setIsLoading(true);
     setError(null);
+    setTrafficSummary(null); // Clear previous summary
 
     try {
       const response = await generateTrafficInsights(userLocation, searchRadius);
       
-      if (!response.success) {
+      if (!response.success || !response.data) {
         throw new Error(response.error || 'Failed to generate insights');
       }
+      
+      // The data is now a string
+      setTrafficSummary(response.data);
 
-      // Format insights with additional metadata
-      const formattedInsights = response.data.map((insight: TrafficInsight): Insight => ({
-        ...insight,
-        id: Math.random().toString(36).substr(2, 9),
-        timestamp: new Date().toLocaleString()
-      }));
-
-      setInsights(formattedInsights);
     } catch (err: any) {
       console.error('Error generating insights:', err);
       setError(err.message || 'Failed to generate insights. Please try again.');
@@ -144,115 +136,66 @@ const InsightsList: React.FC = () => {
             disabled={isAutoDetecting}
             className="p-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
           >
-            {isAutoDetecting ? (
-              <RefreshCw size={18} className="animate-spin" />
-            ) : (
-              <MapPin size={18} />
-            )}
+            {isAutoDetecting ? <RefreshCw size={18} className="animate-spin" /> : <MapPin size={18} />}
           </button>
         </div>
-
-        <div className="flex items-center space-x-4">
-          <label className="text-sm text-gray-600">Search Radius:</label>
-          <select
-            value={searchRadius}
-            onChange={(e) => setSearchRadius(Number(e.target.value))}
-            className="border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary-500"
-          >
-            <option value={1}>1 km</option>
-            <option value={5}>5 km</option>
-            <option value={10}>10 km</option>
-            <option value={20}>20 km</option>
-            <option value={50}>50 km</option>
-          </select>
-          <button
-            onClick={generateInsights}
-            disabled={isLoading || !userLocation}
-            className="ml-auto px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center space-x-2"
-          >
-            {isLoading ? (
-              <>
-                <RefreshCw size={16} className="animate-spin" />
-                <span>Generating...</span>
-              </>
-            ) : (
-              <>
-                <RefreshCw size={16} />
-                <span>Get Live Insights</span>
-              </>
-            )}
-          </button>
+        <div className="flex items-center">
+            <button
+              onClick={generateInsights}
+              disabled={isLoading || !userLocation}
+              className="w-full px-4 py-2 bg-primary-500 text-white rounded-lg hover:bg-primary-600 transition-colors disabled:opacity-50 flex items-center justify-center space-x-2"
+            >
+              {isLoading ? (
+                <>
+                  <RefreshCw size={16} className="animate-spin" />
+                  <span>Generating Report...</span>
+                </>
+              ) : (
+                <>
+                  <FileText size={16} />
+                  <span>Generate Traffic Report</span>
+                </>
+              )}
+            </button>
         </div>
-
-        {error && (
-          <div className="text-sm text-red-600 bg-red-50 p-2 rounded-lg flex items-center space-x-2">
-            <AlertCircle size={16} />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {userLocation && (
-          <div className="text-sm text-gray-600">
-            Selected Location: {userLocation.address || `${userLocation.lat}, ${userLocation.lng}`}
-          </div>
-        )}
       </div>
 
-      {/* Insights List */}
-      <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto">
-        {insights.length === 0 ? (
-          <div className="p-4 text-center text-gray-500">
-            {isLoading ? (
-              <div className="flex items-center justify-center space-x-2">
-                <RefreshCw size={16} className="animate-spin" />
-                <span>Generating insights...</span>
-              </div>
-            ) : (
-              'No insights available. Set a location and click "Get Live Insights" to start.'
-            )}
+      {/* Main Content Area */}
+      <div className="p-6">
+        {isLoading && (
+          <div className="text-center">
+            <p className="text-gray-500">Generating traffic report...</p>
           </div>
-        ) : (
-          insights.map((insight) => (
-          <div 
-            key={insight.id} 
-            className="px-4 py-3 hover:bg-gray-50 transition-colors"
-          >
-            <div className="flex items-start">
-              <div className="mr-3 mt-0.5">
-                {getSeverityIcon(insight.severity)}
-              </div>
-                <div className="flex-1">
-                <p className="text-sm text-secondary-800">{insight.message}</p>
-                  {insight.details && (
-                    <p className="text-xs text-gray-600 mt-1">{insight.details}</p>
-                  )}
-                  {insight.location && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Location: {insight.location.address || `${insight.location.lat}, ${insight.location.lng}`}
-                    </p>
-                  )}
-                <p className="text-xs text-secondary-500 mt-1">{insight.timestamp}</p>
-                </div>
-              </div>
-            </div>
-          ))
+        )}
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-red-700 font-semibold">Error Generating Report</p>
+            <p className="text-red-600 mt-2">{error}</p>
+          </div>
+        )}
+
+        {!isLoading && !error && !trafficSummary && (
+          <div className="text-center p-8 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-blue-700 font-semibold">Ready to Start</p>
+            <p className="text-blue-600 mt-2">Set a location and click "Generate Traffic Report" to get a detailed summary.</p>
+          </div>
+        )}
+
+        {trafficSummary && (
+          <div className="bg-gray-50 p-6 rounded-lg">
+            <h2 className="text-xl font-bold text-gray-800 mb-4">Live Traffic Report</h2>
+            {/* Split the summary by newlines and render as paragraphs */}
+            {trafficSummary.split('\n').map((paragraph, index) => (
+              <p key={index} className="text-gray-700 leading-relaxed mb-4">
+                {paragraph}
+              </p>
+            ))}
+          </div>
         )}
       </div>
     </div>
   );
-};
-
-// Helper function to get severity icon
-const getSeverityIcon = (severity: string) => {
-  switch (severity) {
-    case 'critical':
-      return <AlertCircle size={16} className="text-accent-500" />;
-    case 'warning':
-      return <AlertTriangle size={16} className="text-warning-500" />;
-    case 'info':
-    default:
-      return <Info size={16} className="text-primary-500" />;
-  }
 };
 
 export default InsightsList;
