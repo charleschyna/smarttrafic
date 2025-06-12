@@ -52,7 +52,7 @@ export async function getAIChatCompletion(
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1, 
     response_format: jsonMode ? { type: 'json_object' } : undefined,
-    max_tokens: 2048,
+    max_tokens: 2018,
   });
 
   const content = completion.choices[0]?.message?.content;

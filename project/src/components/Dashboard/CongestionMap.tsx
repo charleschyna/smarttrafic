@@ -12,7 +12,7 @@ const DEFAULT_CENTER = { lat: 51.5074, lng: -0.1278 }; // London as default
 
 const CongestionMap: React.FC = () => {
   const mapElement = useRef<HTMLDivElement>(null);
-  const [map, setMap] = useState<tt.Map | null>(null);
+
   const [mapView, setMapView] = useState('traffic');
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -44,7 +44,12 @@ const CongestionMap: React.FC = () => {
         }
 
         if (mapElement.current && !mapInstance.current) {
-          const apiKey = 'B0e9ZcFGi7FVZxlubq4CQxECwSDjlcvE';
+          const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+          if (!apiKey) {
+            setError('TomTom API key is not defined in environment variables.');
+            setIsLoading(false);
+            return;
+          }
 
           const mapConfig: tt.MapOptions = {
             key: apiKey,
@@ -82,7 +87,7 @@ const CongestionMap: React.FC = () => {
               // Add traffic flow layer
               newMap.addSource('traffic-flow', {
                 type: 'vector',
-                url: `https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`
+                tiles: [`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`]
               });
 
               newMap.addLayer({
@@ -121,7 +126,6 @@ const CongestionMap: React.FC = () => {
           });
 
           mapInstance.current = newMap;
-          setMap(newMap);
           setIsLoading(false);
         }
       } catch (err: any) {
@@ -172,25 +176,23 @@ const CongestionMap: React.FC = () => {
   useEffect(() => {
     if (mapInstance.current && userLocation) {
       try {
-        const style = {
-          map: mapView === 'satellite' ? 'satellite' : 'basic',
-          trafficFlow: true,
-          trafficIncidents: true
-        };
-        
-        mapInstance.current.setStyle(style);
+        const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+        const mapName = mapView === 'satellite' ? 'satellite-main' : 'basic-main';
+        const styleUrl = `https://api.tomtom.com/style/1/style/22.1.1-8?map=${mapName}&traffic_incidents=s3&traffic_flow=relative&poi=main&key=${apiKey}`;
+
+        mapInstance.current.setStyle(styleUrl);
         
         // Re-enable traffic visualization after style change
-        mapInstance.current.once('style.load', () => {
+        mapInstance.current.once('load', () => {
           try {
             if (mapInstance.current) {
-              const apiKey = 'B0e9ZcFGi7FVZxlubq4CQxECwSDjlcvE';
+              const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
               
               // Re-add traffic flow layer after style change
               if (!mapInstance.current.getSource('traffic-flow')) {
                 mapInstance.current.addSource('traffic-flow', {
                   type: 'vector',
-                  url: `https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`
+                  tiles: [`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`]
                 });
 
                 mapInstance.current.addLayer({
