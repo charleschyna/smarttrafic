@@ -33,4 +33,80 @@ export interface AIResponse<T> {
   success: boolean;
   data?: T;
   error?: string;
-} 
+}
+
+/**
+ * Represents the aggregated traffic flow data from multiple sample points.
+ */
+export interface TrafficFlowData {
+  currentSpeed: number;
+  freeFlowSpeed: number;
+  currentTravelTime: number;
+  freeFlowTravelTime: number;
+  confidence: number;
+}
+
+/**
+ * Represents a single point in the hourly congestion forecast.
+ */
+export interface CongestionForecast {
+  hour: string;
+  congestion: number;
+  isForecast?: boolean;
+}
+
+/**
+ * Represents a single data point for the area comparison chart.
+ */
+export interface AreaComparisonData {
+  name: string;
+  congestion: number;
+}
+
+/**
+ * =======================================================================
+ * Route Optimization Types
+ * =======================================================================
+ */
+
+/**
+ * Represents a single turn-by-turn instruction for a route.
+ */
+export interface RouteInstruction {
+  message: string;
+}
+
+/**
+ * Represents a traffic incident on a route, analyzed by the AI.
+ */
+export interface AnalyzedIncident {
+  summary: string;
+  details: string;
+  position: { lat: number; lng: number };
+}
+
+/**
+ * Represents the detailed properties of a single calculated route leg.
+ */
+export interface RouteLeg {
+  distanceInMeters: number;
+  travelTimeInSeconds: number;
+  trafficDelayInSeconds: number;
+  geometry: { lat: number; lng: number }[];
+  instructions: RouteInstruction[];
+}
+
+/**
+ * Represents the complete AI-analyzed result for a route optimization query.
+ */
+export interface OptimizedRoute {
+  aiSummary: string;
+  mainRoute: RouteLeg;
+  alternativeRoutes: RouteLeg[];
+  incidents: AnalyzedIncident[];
+}
+
+/**
+ * Defines the supported vehicle types for route optimization, matching TomTom's API.
+ */
+export type VehicleType = 'car' | 'truck' | 'taxi' | 'bus' | 'van' | 'motorcycle' | 'bicycle' | 'pedestrian';

@@ -2,22 +2,17 @@ import React, { useState, useEffect, useRef } from 'react';
 import { services } from '@tomtom-international/web-sdk-services';
 import tt, { LngLatLike } from '@tomtom-international/web-sdk-maps';
 import '@tomtom-international/web-sdk-maps/dist/maps.css';
-import { Filter, Download, Car, Bus, Truck, Bike, AlertTriangle, ArrowRight, Loader } from 'lucide-react';
+import { Download, Car, Bus, Truck, Bike, AlertTriangle, ArrowRight, Loader, Info, MapPin, Crosshair } from 'lucide-react';
+import { getOptimizedRoute } from '../../AI/services';
+import type { OptimizedRoute, VehicleType } from '../../AI/types';
 
 // Interfaces for our data structures
 interface Location {
   name: string;
-  position: {
-    lat: number;
-    lng: number;
+  position: { 
+    lat: number; 
+    lng: number; 
   };
-}
-
-interface RouteDetails {
-  distance: string;
-  duration: string;
-  congestion: number;
-  instructions: { message: string }[];
 }
 
 const RouteOptimizer: React.FC = () => {
@@ -35,38 +30,106 @@ const RouteOptimizer: React.FC = () => {
   const [destinationResults, setDestinationResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [routeDetails, setRouteDetails] = useState<RouteDetails | null>(null);
-  const [vehicleType, setVehicleType] = useState<'car' | 'bus' | 'truck' | 'bicycle'>('car');
-  const [city, setCity] = useState('Nairobi');
-  const [timeSlot, setTimeSlot] = useState('Morning (6AM-12PM)');
+  const [optimizedRoute, setOptimizedRoute] = useState<OptimizedRoute | null>(null);
+  const [vehicleType, setVehicleType] = useState<VehicleType>('car');
 
   // Initialize map
   useEffect(() => {
-    if (!mapRef.current || mapInstance.current || !apiKey) return;
+    const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+    if (!apiKey) {
+      console.error("TomTom API key is not configured.");
+      setError("TomTom API key is not configured.");
+      return;
+    }
 
-    const map = tt.map({
-      key: apiKey,
-      container: mapRef.current,
-      center: [36.8219, -1.2921], // Default to Nairobi
-      zoom: 12,
-      stylesVisibility: {
-        trafficIncidents: true,
-        trafficFlow: true,
-      },
-    });
+    const initializeMap = (center: [number, number], zoom: number) => {
+      if (mapRef.current) {
+        const newMap = tt.map({
+          key: apiKey,
+          container: mapRef.current,
+          center: center,
+          zoom: zoom,
+          stylesVisibility: {
+            trafficIncidents: true,
+            trafficFlow: true,
+          },
+        });
+        newMap.addControl(new tt.FullscreenControl());
+        newMap.addControl(new tt.NavigationControl());
+        mapInstance.current = newMap;
+      }
+    };
 
-    map.addControl(new tt.FullscreenControl());
-    map.addControl(new tt.NavigationControl());
-    mapInstance.current = map;
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const userLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          setOrigin({ name: 'Your Current Location', position: userLocation });
+          initializeMap([userLocation.lng, userLocation.lat], 13);
+        },
+        () => {
+          // On error or denial, default to Nairobi
+          initializeMap([36.8172, -1.2864], 12);
+        }
+      );
+    } else {
+      // Geolocation not supported
+      initializeMap([36.8172, -1.2864], 12);
+    }
 
-    return () => map.remove();
-  }, [apiKey]);
+    return () => {
+      mapInstance.current?.remove();
+    };
+  }, []); // Run only once on mount
+
+  // Effect to add a marker for the user's current location
+  useEffect(() => {
+    if (mapInstance.current && origin?.name === 'Your Current Location' && origin.position) {
+      const marker = new tt.Marker({ color: '#28a745' }) // Green marker
+        .setLngLat([origin.position.lng, origin.position.lat])
+        .addTo(mapInstance.current);
+      
+      const popup = new tt.Popup({ offset: 25 }).setText('You are here');
+      marker.setPopup(popup);
+      markers.current.push(marker);
+    }
+  }, [mapInstance, origin]);
+
+    const handleUseCurrentLocation = () => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (position) => {
+          const userLocation = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude,
+          };
+          const newOrigin = { name: 'Your Current Location', position: userLocation };
+          setOrigin(newOrigin);
+          setOriginQuery(newOrigin.name); // Update the input field text
+          if (mapInstance.current) {
+            mapInstance.current.setCenter([userLocation.lng, userLocation.lat]);
+            mapInstance.current.setZoom(13);
+          }
+        },
+        (error) => {
+          console.error("Error getting current location:", error);
+          setError("Could not retrieve your location. Please enable location services in your browser.");
+        }
+      );
+    } else {
+      setError("Geolocation is not supported by this browser.");
+    }
+  };
 
   // Debounced location search
-  const handleSearch = async (query: string, city: string, isOrigin: boolean) => {
+  const handleSearch = async (query: string, isOrigin: boolean) => {
     if (!query || !apiKey) return;
     try {
-      const response = await services.fuzzySearch({ key: apiKey, query: `${query}, ${city}` });
+      // Focus search on Kenya
+      const response = await services.fuzzySearch({ key: apiKey, query: `${query}, Nairobi, KE` });
       if (isOrigin) setOriginResults(response.results || []);
       else setDestinationResults(response.results || []);
     } catch (err) {
@@ -76,20 +139,30 @@ const RouteOptimizer: React.FC = () => {
   };
 
   useEffect(() => {
+    // Do not re-search if the query is the same as the selected location
+    if (origin && origin.name === originQuery) {
+      setOriginResults([]);
+      return;
+    }
     const handler = setTimeout(() => {
-      if (originQuery) handleSearch(originQuery, city, true);
+      if (originQuery) handleSearch(originQuery, true);
       else setOriginResults([]);
     }, 500);
     return () => clearTimeout(handler);
-  }, [originQuery, city]);
+  }, [originQuery, origin]);
 
   useEffect(() => {
+    // Do not re-search if the query is the same as the selected location
+    if (destination && destination.name === destinationQuery) {
+      setDestinationResults([]);
+      return;
+    }
     const handler = setTimeout(() => {
-      if (destinationQuery) handleSearch(destinationQuery, city, false);
+      if (destinationQuery) handleSearch(destinationQuery, false);
       else setDestinationResults([]);
     }, 500);
     return () => clearTimeout(handler);
-  }, [destinationQuery, city]);
+  }, [destinationQuery, destination]);
 
   // Clear existing markers and routes from the map
   const clearMap = () => {
@@ -100,11 +173,15 @@ const RouteOptimizer: React.FC = () => {
         mapInstance.current.removeLayer('route');
         mapInstance.current.removeSource('route');
       }
+      if (mapInstance.current.getLayer('alternative_route')) {
+        mapInstance.current.removeLayer('alternative_route');
+        mapInstance.current.removeSource('alternative_route');
+      }
     }
   };
   
   // Calculate and display the optimal route
-  const findOptimalRoute = async () => {
+  const handleFindRoute = async () => {
     if (!origin || !destination || !mapInstance.current) {
       setError('Please select both an origin and a destination.');
       return;
@@ -112,79 +189,81 @@ const RouteOptimizer: React.FC = () => {
 
     setIsLoading(true);
     setError(null);
+    setOptimizedRoute(null);
     clearMap();
 
     try {
-      const routeResponse = await services.calculateRoute({
-        key: apiKey,
-        locations: [origin.position, destination.position],
-        travelMode: vehicleType,
-        traffic: true,
-        instructionsType: 'text',
-      });
+      const result = await getOptimizedRoute(origin.position, destination.position, vehicleType);
 
-      const route = routeResponse.routes[0];
-      if (!route) {
-        setError('No route found.');
+      if (!result) {
+        setError('Could not find an optimized route. Please try again.');
         setIsLoading(false);
         return;
       }
 
-      const { lengthInMeters, travelTimeInSeconds, trafficDelayInSeconds } = route.summary;
-      setRouteDetails({
-        distance: `${(lengthInMeters / 1000).toFixed(1)} km`,
-        duration: `${Math.round(travelTimeInSeconds / 60)} min`,
-        congestion: Math.round((trafficDelayInSeconds / travelTimeInSeconds) * 100),
-        instructions: route.guidance?.instructions?.map((i: any) => ({ message: i.message })) || [],
-      });
-      
-      const coordinates = route.legs.flatMap(leg => 
-        leg.points.map(p => [p.lng, p.lat])
-      ) as [number, number][];
+      setOptimizedRoute(result);
 
-      const geojson: GeoJSON.Feature<GeoJSON.LineString> = {
+      // Draw the main route on the map
+      const mainRouteGeoJSON = {
         type: 'Feature',
         properties: {},
         geometry: {
           type: 'LineString',
-          coordinates: coordinates,
+          coordinates: result.mainRoute.geometry.map(p => [p.lng, p.lat]),
         },
       };
 
-      mapInstance.current.addSource('route', { type: 'geojson', data: geojson });
+      mapInstance.current.addSource('route', { type: 'geojson', data: mainRouteGeoJSON as any });
       mapInstance.current.addLayer({
         id: 'route',
         type: 'line',
         source: 'route',
-        paint: { 'line-color': '#007cff', 'line-width': 6 },
+        paint: { 'line-color': '#16a34a', 'line-width': 8, 'line-opacity': 0.9 },
       });
 
-      const originMarker = new tt.Marker({ color: 'green' }).setLngLat(origin.position as LngLatLike).addTo(mapInstance.current);
-      const destMarker = new tt.Marker({ color: 'red' }).setLngLat(destination.position as LngLatLike).addTo(mapInstance.current);
+      // Add markers for origin, destination, and incidents
+      const originMarker = new tt.Marker({ color: '#22c55e' }).setLngLat(origin.position as LngLatLike).addTo(mapInstance.current);
+      const destMarker = new tt.Marker({ color: '#ef4444' }).setLngLat(destination.position as LngLatLike).addTo(mapInstance.current);
       markers.current = [originMarker, destMarker];
 
-      const bounds = new tt.LngLatBounds();
-      coordinates.forEach(point => bounds.extend(point));
-      mapInstance.current.fitBounds(bounds, { padding: 50, duration: 300 });
+      result.incidents.forEach(incident => {
+        const popup = new tt.Popup({ offset: 25 }).setText(incident.summary);
+        const incidentMarker = new tt.Marker({ color: '#f59e0b' })
+          .setLngLat(incident.position as LngLatLike)
+          .setPopup(popup)
+          .addTo(mapInstance.current!);
+        markers.current.push(incidentMarker);
+      });
 
+      // Fit map to bounds
+      const bounds = new tt.LngLatBounds();
+      result.mainRoute.geometry.forEach(point => bounds.extend([point.lng, point.lat]));
+      mapInstance.current.fitBounds(bounds, { padding: 100, duration: 500 });
+      
     } catch (err) {
-      setError('Failed to calculate the route.');
+      setError('An unexpected error occurred while fetching the route.');
       console.error(err);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Renders the dropdown for location search results
   const renderLocationDropdown = (results: any[], onSelect: (location: Location) => void) => (
-    <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
+    <div className="absolute z-20 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto">
       {results.map((result) => (
         <button
           key={result.id}
-          onClick={() => onSelect({
-            name: result.address.freeformAddress,
-            position: { lat: result.position.lat, lng: result.position.lon }
-          })}
-          className="w-full px-4 py-2 text-left hover:bg-gray-50"
+          onClick={() => {
+            onSelect({
+              name: result.address.freeformAddress,
+              position: { 
+                lat: result.position.lat, 
+                lng: result.position.lng // Corrected from .lon to .lng
+              }
+            });
+          }}
+          className="w-full px-4 py-2 text-left hover:bg-green-50 transition-colors"
         >
           {result.address.freeformAddress}
         </button>
@@ -193,107 +272,139 @@ const RouteOptimizer: React.FC = () => {
   );
 
   return (
-    <div className="p-6 font-sans bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
+    <div className="p-4 sm:p-6 font-sans bg-gray-50 min-h-screen">
+      <header className="flex justify-between items-center mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-gray-800">Route Optimization</h1>
-          <p className="text-gray-500">Find the most efficient routes with real-time traffic data</p>
+          <h1 className="text-3xl font-bold text-gray-800">AI Route Planner</h1>
+          <p className="text-gray-500">Smart logistics and traffic analysis for Kenya</p>
         </div>
         <button className="flex items-center px-4 py-2 text-gray-600 border border-gray-300 rounded-lg shadow-sm hover:bg-gray-100 transition-colors">
           <Download size={18} className="mr-2" />
-          Export Route
+          Export
         </button>
-      </div>
+      </header>
 
-      <div className="flex items-center gap-4 mb-6 p-4 bg-white rounded-lg shadow-sm">
-          <Filter size={20} className="text-gray-500" />
-          <span className="text-gray-700 font-semibold">Filters</span>
-        <select value={city} onChange={(e) => setCity(e.target.value)} className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-          <option>Nairobi</option>
-          <option>Mombasa</option>
-          <option>Kisumu</option>
-        </select>
-        <select value={timeSlot} onChange={(e) => setTimeSlot(e.target.value)} className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-          <option>Morning (6AM-12PM)</option>
-          <option>Afternoon (12PM-6PM)</option>
-          <option>Evening (6PM-12AM)</option>
-        </select>
-        <button onClick={() => { /* Reset filters */ }} className="text-blue-600 font-semibold hover:underline">Reset</button>
-      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Left Column: Controls */}
+        <div className="lg:col-span-1 bg-white rounded-xl p-6 shadow-md space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-700 mb-4">Plan Your Route</h2>
+            <div className="space-y-4">
+                <div className="relative">
+                  <input type="text" value={originQuery} onChange={(e) => setOriginQuery(e.target.value)} placeholder="Origin Location" className="w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 transition-colors"/>
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
+                  <button
+                    onClick={handleUseCurrentLocation}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-green-500 transition-colors"
+                    title="Use my current location"
+                  >
+                    <Crosshair size={20} />
+                  </button>
+                  {originResults.length > 0 && renderLocationDropdown(originResults, (loc) => {
+                    setOrigin(loc);
+                    setOriginQuery(loc.name);
+                    setOriginResults([]);
+                  })}
+                </div>
+                <div className="relative">
+                  <input type="text" value={destinationQuery} onChange={(e) => setDestinationQuery(e.target.value)} placeholder="Destination Location" className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 transition-colors"/>
+                  <MapPin className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20}/>
+                  {destinationResults.length > 0 && renderLocationDropdown(destinationResults, (loc) => {
+                    setDestination(loc);
+                    setDestinationQuery(loc.name);
+                    setDestinationResults([]);
+                  })}
+                </div>
+            </div>
+          </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Left Column: Form */}
-        <div className="bg-white rounded-lg p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-gray-800 mb-5">Find Optimal Route</h2>
-          <div className="space-y-5">
-            <div className="relative">
-              <input type="text" value={originQuery} onChange={(e) => setOriginQuery(e.target.value)} placeholder="Origin" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
-              {originResults.length > 0 && renderLocationDropdown(originResults, (loc) => {
-                setOrigin(loc);
-                setOriginQuery(loc.name);
-                setOriginResults([]);
-              })}
-            </div>
-            <div className="relative">
-              <input type="text" value={destinationQuery} onChange={(e) => setDestinationQuery(e.target.value)} placeholder="Destination" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"/>
-              {destinationResults.length > 0 && renderLocationDropdown(destinationResults, (loc) => {
-                setDestination(loc);
-                setDestinationQuery(loc.name);
-                setDestinationResults([]);
-              })}
-            </div>
-            <div className="flex justify-around gap-3">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-700 mb-3">Select Vehicle</h3>
+            <div className="grid grid-cols-2 gap-3">
                 {(['car', 'bus', 'truck', 'bicycle'] as const).map(v => (
-                    <button key={v} onClick={() => setVehicleType(v)} className={`flex-1 p-4 rounded-lg border-2 text-center capitalize transition-colors ${vehicleType === v ? 'border-blue-500 bg-blue-50 shadow-inner' : 'border-gray-200 hover:border-gray-400'}`}>
-                        {v === 'bicycle' ? <Bike className="mx-auto h-6 w-6"/> : v === 'bus' ? <Bus className="mx-auto h-6 w-6"/> : v === 'truck' ? <Truck className="mx-auto h-6 w-6"/> : <Car className="mx-auto h-6 w-6"/>}
-                        <span className="text-sm font-medium mt-2 block">{v}</span>
+                    <button key={v} onClick={() => setVehicleType(v)} className={`flex items-center justify-center gap-2 p-3 rounded-lg border-2 text-center capitalize transition-colors ${vehicleType === v ? 'border-green-500 bg-green-50 shadow-inner' : 'border-gray-200 hover:border-gray-300'}`}>
+                        {v === 'bicycle' ? <Bike size={20}/> : v === 'bus' ? <Bus size={20}/> : v === 'truck' ? <Truck size={20}/> : <Car size={20}/>}
+                        <span className="font-medium">{v}</span>
                     </button>
                 ))}
             </div>
-            <button onClick={findOptimalRoute} disabled={isLoading} className="w-full py-3 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center justify-center transition-all">
-              {isLoading ? <><Loader className="animate-spin mr-3" size={20} /> Calculating...</> : 'Find Optimal Route'}
-            </button>
           </div>
+
+          <button onClick={handleFindRoute} disabled={isLoading || !origin || !destination} className="w-full py-3 bg-green-600 text-white font-bold rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center transition-all shadow-lg hover:shadow-xl transform hover:-translate-y-0.5">
+            {isLoading ? <><Loader className="animate-spin mr-3" size={20} /> Calculating...</> : 'Find Optimal Route'}
+          </button>
         </div>
 
-        {/* Right Column: Results */}
-        <div className="bg-white rounded-lg p-6 shadow-sm">
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Route Details</h2>
-          {error && <div className="p-4 mb-4 bg-red-100 text-red-800 border-l-4 border-red-500 rounded-r-lg">{error}</div>}
-          
-          <div className="h-64 bg-gray-200 rounded-lg mb-4" ref={mapRef}>
-             {!routeDetails && !error && <div className="flex items-center justify-center h-full text-gray-500">Enter a route to see the map</div>}
+        {/* Right Column: Map & Results */}
+        <div className="lg:col-span-2 space-y-6">
+          <div className="bg-white rounded-xl p-4 shadow-md">
+            <div style={{height: '450px'}} className="bg-gray-200 rounded-lg flex items-center justify-center overflow-hidden" ref={mapRef}>
+              {!optimizedRoute && !error && !isLoading && 
+                <div className="text-gray-500 text-center">
+                  <MapPin size={40} className="mx-auto text-gray-400 mb-2"/>
+                  <p>Your route map will appear here.</p>
+                </div>
+              }
+              {isLoading && <div className="text-gray-500 flex items-center"><Loader className="animate-spin mr-3" /> Searching for the best route...</div>}
+            </div>
           </div>
 
-          {routeDetails ? (
-            <div>
-              <div className="flex items-center justify-between mb-4 text-sm">
-                  <div className="flex items-center font-semibold text-gray-700 truncate"><div className="w-3 h-3 rounded-full bg-green-500 mr-3 flex-shrink-0"/>{origin?.name}</div>
-                  <ArrowRight className="text-gray-400 mx-4" />
-                  <div className="flex items-center font-semibold text-gray-700 truncate"><div className="w-3 h-3 rounded-full bg-red-500 mr-3 flex-shrink-0"/>{destination?.name}</div>
-              </div>
-              <div className="grid grid-cols-3 gap-4 text-center mb-6 p-4 bg-gray-50 rounded-lg">
-                <div><div className="text-2xl font-bold text-gray-800">{routeDetails.distance}</div><div className="text-sm text-gray-500">Distance</div></div>
-                <div><div className="text-2xl font-bold text-gray-800">{routeDetails.duration}</div><div className="text-sm text-gray-500">Duration</div></div>
-                <div><div className="text-2xl font-bold text-gray-800">{routeDetails.congestion}%</div><div className="text-sm text-gray-500">Congestion</div></div>
+          {error && <div className="p-4 bg-red-100 text-red-800 border-l-4 border-red-500 rounded-r-lg shadow-md">{error}</div>}
+
+          {optimizedRoute ? (
+            <div className="bg-white rounded-xl p-6 shadow-md space-y-6">
+              <div className="p-4 bg-green-50 border-l-4 border-green-500 rounded-r-lg">
+                <h3 className="font-semibold text-green-800 flex items-center mb-2"><Info size={18} className="mr-2" /> AI Summary</h3>
+                <p className="text-sm text-green-900 leading-relaxed">{optimizedRoute.aiSummary}</p>
               </div>
 
-              {routeDetails.congestion > 50 && (
-                <div className="mt-4 p-3 bg-yellow-100 border-l-4 border-yellow-500 rounded-r-lg flex items-center">
-                  <AlertTriangle className="text-yellow-600 mr-3" />
-                  <p className="text-sm font-medium text-yellow-800">High traffic detected. Consider an alternative route.</p>
+              <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center font-semibold text-gray-700 truncate"><div className="w-3 h-3 rounded-full bg-green-500 mr-3 flex-shrink-0"/>{origin?.name}</div>
+                  <ArrowRight className="text-gray-400 mx-2 sm:mx-4" />
+                  <div className="flex items-center font-semibold text-gray-700 truncate"><div className="w-3 h-3 rounded-full bg-red-500 mr-3 flex-shrink-0"/>{destination?.name}</div>
+              </div>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-center p-4 bg-gray-50 rounded-lg">
+                <div><div className="text-2xl font-bold text-gray-800">{(optimizedRoute.mainRoute.distanceInMeters / 1000).toFixed(1)} km</div><div className="text-sm text-gray-500">Distance</div></div>
+                <div><div className="text-2xl font-bold text-gray-800">{Math.round(optimizedRoute.mainRoute.travelTimeInSeconds / 60)} min</div><div className="text-sm text-gray-500">Duration</div></div>
+                <div><div className="text-2xl font-bold text-gray-800">{Math.round(optimizedRoute.mainRoute.trafficDelayInSeconds / 60)} min</div><div className="text-sm text-gray-500">Traffic Delay</div></div>
+              </div>
+
+              {optimizedRoute.incidents.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-gray-800 mb-3 flex items-center"><AlertTriangle size={18} className="mr-2 text-yellow-600" /> Incidents on Route</h3>
+                  <div className="space-y-3">
+                    {optimizedRoute.incidents.map((incident, index) => (
+                      <div key={index} className="p-3 bg-yellow-50 border-l-4 border-yellow-400 rounded-r-lg">
+                        <p className="font-semibold text-sm text-yellow-800">{incident.summary}</p>
+                        <p className="text-xs text-yellow-700 mt-1">{incident.details}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
-              <div className="mt-4">
-                <h3 className="font-semibold text-gray-800 mb-2">Turn-by-turn Directions</h3>
-                <div className="space-y-2 max-h-32 overflow-y-auto p-3 bg-gray-50 rounded-lg border">
-                  {routeDetails.instructions.length > 0 ? routeDetails.instructions.map((inst, index) => <div key={index} className="text-sm text-gray-700">{inst.message}</div>) : <div className="text-sm text-gray-500">No instructions available.</div>}
+              {optimizedRoute.alternativeRoutes.length > 0 && (
+                <div>
+                  <h3 className="font-semibold text-gray-800 mb-3 flex items-center"><MapPin size={18} className="mr-2 text-gray-600" /> Alternative Routes</h3>
+                  <div className="space-y-2">
+                    {optimizedRoute.alternativeRoutes.map((altRoute, index) => (
+                      <div key={index} className="p-3 bg-gray-100 border rounded-lg text-sm hover:bg-gray-200 transition-colors">
+                        <span className="font-semibold">Alternative {index + 1}:</span> {Math.round(altRoute.travelTimeInSeconds / 60)} min, {(altRoute.distanceInMeters / 1000).toFixed(1)} km
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           ) : (
-             <div className="text-center text-gray-500 py-12">Enter origin and destination to see route details.</div>
+             !isLoading && !error && (
+                <div className="bg-white rounded-xl p-6 shadow-md text-center text-gray-500">
+                  <Info className="mx-auto h-12 w-12 text-gray-400 mb-4" />
+                  <h3 className="text-lg font-semibold text-gray-700">Route analysis will appear here.</h3>
+                  <p>Enter an origin and destination to get started.</p>
+                </div>
+             )
           )}
         </div>
       </div>
@@ -301,4 +412,4 @@ const RouteOptimizer: React.FC = () => {
   );
 };
 
-export default RouteOptimizer; 
+export default RouteOptimizer;

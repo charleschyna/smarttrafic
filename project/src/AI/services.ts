@@ -1,5 +1,17 @@
 import { getAIChatCompletion } from './AIService';
-import type { TrafficPrediction, AIResponse } from './types';
+import type { TimeFrame } from '../components/Charts/CongestionChart';
+import { services } from '@tomtom-international/web-sdk-services';
+import type {
+  TrafficPrediction,
+  AIResponse,
+  TrafficFlowData,
+  CongestionForecast,
+  AreaComparisonData,
+  OptimizedRoute,
+  RouteLeg,
+  AnalyzedIncident,
+  VehicleType
+} from './types';
 
 // Function to get traffic flow data from TomTom API using multi-point sampling
 async function getTrafficFlowData(location: { lat: number; lng: number }, radius: number) {
@@ -84,7 +96,110 @@ async function getTrafficFlowData(location: { lat: number; lng: number }, radius
   };
 }
 
+/**
+ * Generates a congestion forecast for the next 8 hours using AI.
+ * @param flowData The current traffic flow data.
+ * @returns An array of congestion forecast objects.
+ */
+
+
 // Function to get traffic incident data from TomTom API
+async function getCongestionForecast(flowData: TrafficFlowData | null, timeFrame: TimeFrame): Promise<CongestionForecast[]> {
+  if (!flowData) {
+    return [];
+  }
+
+  let promptDetails = '';
+  let exampleFormat = '';
+
+  switch (timeFrame) {
+    case 'week':
+      promptDetails = 'predict the average daily congestion level (%) for the next 7 days.';
+      exampleFormat = '[{ "hour": "Mon", "congestion": 45 }, { "hour": "Tue", "congestion": 50 }]';
+      break;
+    case 'month':
+      promptDetails = 'predict the average weekly congestion level (%) for the next 4 weeks.';
+      exampleFormat = '[{ "hour": "Week 1", "congestion": 55 }, { "hour": "Week 2", "congestion": 60 }]';
+      break;
+    case 'today':
+    default:
+      promptDetails = 'provide a 24-hour congestion overview. For past hours, use observed data. For future hours, provide a forecast. Add an `isForecast: true` flag to all forecasted hours.';
+      exampleFormat = '[{ "hour": "1 AM", "congestion": 15 }, { "hour": "2 PM", "congestion": 60, "isForecast": true }]';
+      break;
+  }
+
+  const prompt = `
+    You are an expert traffic analyst AI for Nairobi, Kenya.
+    Based on the following real-time traffic data, ${promptDetails}
+    - Current Time: ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+    - Current Average Travel Time: ${Math.round(flowData.currentTravelTime)} seconds
+    - Typical Free-Flow Travel Time: ${Math.round(flowData.freeFlowTravelTime)} seconds
+    - Current Congestion Level: ${Math.round(((flowData.currentTravelTime - flowData.freeFlowTravelTime) / flowData.freeFlowTravelTime) * 100)}%
+
+    Provide your forecast as a JSON array of objects. Each object must have two keys: "hour" (a string for the time period) and "congestion" (a number).
+    The key for the time period MUST be "hour".
+    Example format: ${exampleFormat}
+  `;
+
+  try {
+    const aiResponse = await getAIChatCompletion('gpt-3.5-turbo', prompt, true);
+    const parsedResponse = JSON.parse(aiResponse);
+
+    // The AI sometimes wraps the array in an object, so we handle that.
+    const forecastData = Array.isArray(parsedResponse) ? parsedResponse : parsedResponse.forecast || parsedResponse.analysis || [];
+    
+
+    if (Array.isArray(forecastData) && forecastData.every(item => 'hour' in item && 'congestion' in item)) {
+      return forecastData;
+    }
+
+    // Handle cases where the data is nested under a different key like 'forecast'
+    if (parsedResponse.forecast && Array.isArray(parsedResponse.forecast)) {
+      return parsedResponse.forecast;
+    }
+
+    console.error('AI response is not in the expected format:', parsedResponse);
+    return [];
+  } catch (error) {
+    console.error('Error generating or parsing congestion forecast:', error);
+    return []; // Return empty array on error
+  }
+}
+
+async function getAreaComparisonData(flowData: TrafficFlowData | null): Promise<AreaComparisonData[]> {
+  if (!flowData) {
+    return [];
+  }
+
+  const prompt = `
+    You are an expert traffic analyst AI for Nairobi, Kenya.
+    Based on the provided real-time traffic data, analyze and compare the current congestion levels across different key sub-regions of the city.
+    The main regions to consider are: CBD, Westlands, Industrial Area, Upper Hill, and Kilimani.
+
+    Provide your analysis as a JSON array of objects. Each object must have two keys: "name" (the name of the area) and "congestion" (a number representing the congestion level in that area).
+    Example format: [{ "name": "CBD", "congestion": 75 }, { "name": "Westlands", "congestion": 60 }]
+  `;
+
+  try {
+    const aiResponse = await getAIChatCompletion('gpt-3.5-turbo', prompt, true);
+    const parsedResponse = JSON.parse(aiResponse);
+
+    // The AI sometimes wraps the array in an object, so we handle that.
+    const analysisData = Array.isArray(parsedResponse) ? parsedResponse : parsedResponse.analysis || [];
+
+
+    if (Array.isArray(analysisData) && analysisData.every(item => 'name' in item && 'congestion' in item)) {
+      return analysisData;
+    } else {
+      console.error('AI response for area comparison is not in the expected format:', parsedResponse);
+      return [];
+    }
+  } catch (error) {
+    console.error('Error generating or parsing area comparison data:', error);
+    return [];
+  }
+}
+
 async function getTrafficIncidentData(location: { lat: number; lng: number }, radius: number) {
   const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
   if (!apiKey) {
@@ -173,12 +288,16 @@ Your Report:
 }
 
 // Function to get aggregated data for the dashboard
-export async function getDashboardData(location: { lat: number; lng: number }, radius: number) {
+export async function getDashboardData(location: { lat: number; lng: number }, radius: number, timeFrame: TimeFrame) {
   try {
+    // Fetch all data concurrently
     const [flowData, incidentData] = await Promise.all([
       getTrafficFlowData(location, radius),
       getTrafficIncidentData(location, radius)
     ]);
+
+    const congestionForecast = await getCongestionForecast(flowData, timeFrame);
+    const areaComparisonData = await getAreaComparisonData(flowData);
 
     let congestionLevel = 0;
     // Switched to a more accurate congestion calculation based on travel time delay.
@@ -208,6 +327,9 @@ export async function getDashboardData(location: { lat: number; lng: number }, r
         avgTripTime,
         activeIncidents,
         incidents: incidentData?.incidents || [], // Return the full list of incidents
+        freeFlowTravelTime: flowData?.freeFlowTravelTime || 0,
+        congestionForecast, // Add the forecast to the payload
+        areaComparisonData, // Add the area comparison data
       }
     };
   } catch (error) {
@@ -216,6 +338,129 @@ export async function getDashboardData(location: { lat: number; lng: number }, r
       success: false,
       error: error instanceof Error ? error.message : 'An unknown error occurred.',
     };
+  }
+}
+
+/**
+ * =======================================================================
+ * Route Optimization Service
+ * =======================================================================
+ */
+
+/**
+ * Fetches route options from TomTom and uses AI to analyze and summarize them.
+ * @param origin The starting coordinates.
+ * @param destination The destination coordinates.
+ * @param vehicle The type of vehicle (e.g., 'car', 'truck').
+ * @returns An OptimizedRoute object or null if an error occurs.
+ */
+export async function getOptimizedRoute(
+  origin: { lat: number; lng: number },
+  destination: { lat: number; lng: number },
+  vehicle: VehicleType
+): Promise<OptimizedRoute | null> {
+  const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+  if (!apiKey) {
+    console.error('[getOptimizedRoute] TomTom API key is not configured.');
+    return null;
+  }
+
+  console.log(`[getOptimizedRoute] Starting for vehicle: ${vehicle}`, { origin, destination });
+
+  try {
+    const locationsString = `${origin.lat},${origin.lng}:${destination.lat},${destination.lng}`;
+
+    const routeResponse = await services.calculateRoute({
+      key: apiKey,
+      locations: locationsString,
+      travelMode: vehicle,
+      maxAlternatives: 2,
+      traffic: true,
+      computeTravelTimeFor: 'all',
+      instructionsType: 'text',
+      routeType: 'fastest',
+    });
+    console.log("[getOptimizedRoute] TomTom API Response:", routeResponse);
+
+    if (!routeResponse || !routeResponse.routes || routeResponse.routes.length === 0) {
+      console.error("[getOptimizedRoute] No routes found by TomTom API.", routeResponse);
+      return null;
+    }
+
+    const processRoute = (route: any): RouteLeg => {
+      const leg = route.legs[0];
+      return {
+        distanceInMeters: route.summary.lengthInMeters,
+        travelTimeInSeconds: route.summary.travelTimeInSeconds,
+        trafficDelayInSeconds: route.summary.trafficDelayInSeconds,
+        geometry: leg.points.map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })),
+        instructions: leg.instructions.map((inst: { message: string }) => ({ message: inst.message })),
+      };
+    };
+
+    const mainTomtomRoute = routeResponse.routes[0];
+    const mainRoute = processRoute(mainTomtomRoute);
+    const alternativeRoutes = routeResponse.routes.slice(1).map(processRoute);
+    console.log("[getOptimizedRoute] Processed main route:", mainRoute);
+
+    const incidentsOnRoute = (mainTomtomRoute.summary as any).trafficIncidents || [];
+    const incidents = incidentsOnRoute.map((incident: any) => ({
+      type: incident.properties.iconCategory,
+      summary: incident.properties.events[0].description,
+      position: {
+        lat: incident.geometry.coordinates[1],
+        lng: incident.geometry.coordinates[0],
+      },
+    }));
+    console.log("[getOptimizedRoute] Parsed incidents:", incidents);
+
+    const prompt = `
+      You are an AI traffic assistant.
+      Given the following route data, provide a concise summary for the user and analyze the incidents.
+
+      Data:
+      - Main Route: ${JSON.stringify(mainRoute, null, 2)}
+      - Alternative Routes: ${JSON.stringify(alternativeRoutes, null, 2)}
+      - Incidents on Main Route: ${JSON.stringify(incidents, null, 2)}
+
+      Your response must be a single, valid JSON object with two keys:
+      1. "summary" (string): A brief, user-friendly summary of the route, mentioning the primary route's duration and any significant delays or incidents.
+      2. "incidents" (array): An array of the same incidents you were given, but with an added "details" key (string) for each, explaining the likely impact of that incident in a user-friendly way.
+
+      Example for an incident object in the output array:
+      {
+        "type": "CONSTRUCTION",
+        "summary": "Lane closed due to construction",
+        "position": { "lat": -1.2833, "lng": 36.8167 },
+        "details": "The lane closure for construction is likely to cause significant delays, especially during peak hours. It's best to consider an alternative route if possible."
+      }
+    `;
+
+    console.log("[getOptimizedRoute] Sending prompt to AI...");
+    const aiResponse = await getAIChatCompletion('gpt-4-turbo', prompt, true);
+    console.log("[getOptimizedRoute] Raw AI Response:", aiResponse);
+
+    if (!aiResponse) {
+      console.error("AI service returned an empty response.");
+      return null;
+    }
+
+    const parsedResponse = JSON.parse(aiResponse) as { summary: string; incidents: AnalyzedIncident[] };
+    console.log("[getOptimizedRoute] Parsed AI Response:", parsedResponse);
+
+    const optimizedRoute: OptimizedRoute = {
+      aiSummary: parsedResponse.summary,
+      mainRoute: mainRoute,
+      alternativeRoutes: alternativeRoutes,
+      incidents: parsedResponse.incidents,
+    };
+
+    console.log("[getOptimizedRoute] Successfully created optimized route:", optimizedRoute);
+    return optimizedRoute;
+
+  } catch (error) {
+    console.error("[getOptimizedRoute] CATCH BLOCK: An error occurred:", error);
+    return null;
   }
 }
 

@@ -8,10 +8,10 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { AreaData } from '../../types';
+import { AreaComparisonData } from '../../AI/types';
 
 interface AreaComparisonChartProps {
-  data: AreaData[];
+  data: AreaComparisonData[];
 }
 
 const AreaComparisonChart: React.FC<AreaComparisonChartProps> = ({ data }) => {
@@ -48,7 +48,7 @@ const AreaComparisonChart: React.FC<AreaComparisonChartProps> = ({ data }) => {
               }}
             />
             <Bar 
-              dataKey="congestionLevel" 
+              dataKey="congestion" 
               name="Congestion" 
               fill="#2F9E44" 
               radius={[4, 4, 0, 0]} 

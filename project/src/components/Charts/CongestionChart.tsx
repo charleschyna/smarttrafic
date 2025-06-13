@@ -8,13 +8,26 @@ import {
   Tooltip, 
   ResponsiveContainer 
 } from 'recharts';
-import { TimeSeriesData } from '../../types';
+import { CongestionForecast } from '../../AI/types';
+
+export type TimeFrame = 'today' | 'week' | 'month';
 
 interface CongestionChartProps {
-  data: TimeSeriesData[];
+  data: CongestionForecast[];
+  onTimeFrameChange: (timeFrame: TimeFrame) => void;
+  activeTimeFrame: TimeFrame;
 }
 
-const CongestionChart: React.FC<CongestionChartProps> = ({ data }) => {
+const CongestionChart: React.FC<CongestionChartProps> = ({ data, onTimeFrameChange, activeTimeFrame }) => {
+  // Prepare data for dual-line rendering (historical vs. forecast)
+  const chartData = data.map((d, i) => {
+    const isLastHistorical = !d.isForecast && (i + 1 === data.length || data[i + 1].isForecast);
+    return {
+      ...d,
+      historical: !d.isForecast ? d.congestion : undefined,
+      forecast: d.isForecast || isLastHistorical ? d.congestion : undefined,
+    };
+  });
   return (
     <div className="bg-white rounded-lg shadow-sm p-4">
       <h3 className="text-base font-medium text-secondary-900 mb-4">Daily Congestion Trends</h3>
@@ -22,7 +35,7 @@ const CongestionChart: React.FC<CongestionChartProps> = ({ data }) => {
       <div className="h-64">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
-            data={data}
+            data={chartData}
             margin={{ top: 5, right: 20, left: 0, bottom: 5 }}
           >
             <defs>
@@ -33,7 +46,7 @@ const CongestionChart: React.FC<CongestionChartProps> = ({ data }) => {
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis 
-              dataKey="time" 
+              dataKey="hour" 
               tick={{ fontSize: 12 }} 
               tickLine={false}
               axisLine={{ stroke: '#e0e0e0' }}
@@ -55,11 +68,22 @@ const CongestionChart: React.FC<CongestionChartProps> = ({ data }) => {
             />
             <Area 
               type="monotone" 
-              dataKey="congestion" 
+              dataKey="historical"
               stroke="#2F9E44" 
               strokeWidth={2}
               fillOpacity={1} 
               fill="url(#colorCongestion)" 
+              connectNulls
+            />
+            <Area 
+              type="monotone" 
+              dataKey="forecast"
+              stroke="#2F9E44" 
+              strokeWidth={2}
+              strokeDasharray="5 5"
+              fillOpacity={1} 
+              fill="url(#colorCongestion)" 
+              connectNulls
             />
           </AreaChart>
         </ResponsiveContainer>
@@ -71,10 +95,19 @@ const CongestionChart: React.FC<CongestionChartProps> = ({ data }) => {
           <span>Congestion Level</span>
         </div>
         
-        <div className="flex space-x-4">
-          <button className="font-medium hover:text-primary-600">Today</button>
-          <button className="font-medium hover:text-primary-600">Week</button>
-          <button className="font-medium hover:text-primary-600">Month</button>
+        <div className="flex space-x-1 bg-gray-100 p-1 rounded-md">
+          {(['today', 'week', 'month'] as TimeFrame[]).map((frame) => (
+            <button 
+              key={frame}
+              onClick={() => onTimeFrameChange(frame)}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors duration-200 ${ 
+                activeTimeFrame === frame 
+                  ? 'bg-white text-primary-600 shadow-sm' 
+                  : 'text-gray-500 hover:bg-gray-200'
+              }`}>
+              {frame.charAt(0).toUpperCase() + frame.slice(1)}
+            </button>
+          ))}
         </div>
       </div>
     </div>
