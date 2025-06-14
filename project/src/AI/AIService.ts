@@ -1,26 +1,33 @@
 import OpenAI from 'openai';
 import { AIConfig } from './config';
 
-let openai: OpenAI | null = null;
+// Manages a pool of OpenAI client instances, one for each API key type.
+const clients: { [key: string]: OpenAI } = {};
+
+export type ApiKeyType = 'default' | 'routing';
 
 /**
- * Initializes and returns a singleton instance of the OpenAI client.
- * This function ensures the client is only created once.
+ * Initializes and returns a specific instance of the OpenAI client based on key type.
+ * This function ensures each client is only created once.
  */
-function getOpenAIClient(): OpenAI {
-  if (openai) {
-    return openai;
+function getOpenAIClient(keyType: ApiKeyType = 'default'): OpenAI {
+  if (clients[keyType]) {
+    return clients[keyType];
   }
 
-  const { apiKey, baseURL, siteURL, siteTitle } = AIConfig;
+  const { apiKey, routingApiKey, baseURL, siteURL, siteTitle } = AIConfig;
 
-  if (!apiKey) {
-    throw new Error('OpenAI API key is not configured. Please set VITE_OPENAI_API_KEY in your .env file.');
+  // Use the routing key if it's requested AND available. Otherwise, fall back to the default key.
+  const keyToUse = keyType === 'routing' && routingApiKey ? routingApiKey : apiKey;
+
+  if (!keyToUse) {
+    // This error will now only trigger if the default key is also missing.
+    throw new Error(`The required OpenAI API key is not configured. Please ensure VITE_OPENAI_API_KEY is set.`);
   }
 
-  openai = new OpenAI({
+  const newClient = new OpenAI({
     baseURL,
-    apiKey,
+    apiKey: keyToUse,
     defaultHeaders: {
       'HTTP-Referer': siteURL,
       'X-Title': siteTitle,
@@ -28,7 +35,8 @@ function getOpenAIClient(): OpenAI {
     dangerouslyAllowBrowser: true,
   });
 
-  return openai;
+  clients[keyType] = newClient;
+  return newClient;
 }
 
 /**
@@ -43,16 +51,17 @@ function getOpenAIClient(): OpenAI {
 export async function getAIChatCompletion(
   model: string,
   prompt: string,
-  jsonMode: boolean = false
+  jsonMode: boolean = false,
+  keyType: ApiKeyType = 'default'
 ): Promise<string> {
-  const client = getOpenAIClient();
+  const client = getOpenAIClient(keyType);
   
   const completion = await client.chat.completions.create({
     model,
     messages: [{ role: 'user', content: prompt }],
     temperature: 0.1, 
     response_format: jsonMode ? { type: 'json_object' } : undefined,
-    max_tokens: 2018,
+    max_tokens: 85,
   });
 
   const content = completion.choices[0]?.message?.content;

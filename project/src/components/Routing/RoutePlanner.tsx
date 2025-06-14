@@ -93,7 +93,7 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
             apiKey={apiKey}
             onLocationSelect={(location) => {
               setStartPoint({
-                position: [location.position.lon, location.position.lat],
+                position: [location.position.lat, location.position.lng],
                 address: location.address.freeformAddress
               });
             }}
@@ -110,7 +110,7 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
               onLocationSelect={(location) => {
                 const newViaPoints = [...viaPoints];
                 newViaPoints[index] = {
-                  position: [location.position.lon, location.position.lat],
+                  position: [location.position.lat, location.position.lng],
                   address: location.address.freeformAddress
                 };
                 setViaPoints(newViaPoints);
@@ -133,7 +133,7 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
             apiKey={apiKey}
             onLocationSelect={(location) => {
               setEndPoint({
-                position: [location.position.lon, location.position.lat],
+                position: [location.position.lat, location.position.lng],
                 address: location.address.freeformAddress
               });
             }}

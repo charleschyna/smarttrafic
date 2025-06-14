@@ -368,11 +368,16 @@ export async function getOptimizedRoute(
   console.log(`[getOptimizedRoute] Starting for vehicle: ${vehicle}`, { origin, destination });
 
   try {
-    const locationsString = `${origin.lat},${origin.lng}:${destination.lat},${destination.lng}`;
+    // Definitive Fix: Use an array of LngLatLike objects instead of a string.
+    // This is more robust and less prone to formatting errors.
+    const locations = [
+      { lat: origin.lat, lng: origin.lng },
+      { lat: destination.lat, lng: destination.lng },
+    ];
 
     const routeResponse = await services.calculateRoute({
       key: apiKey,
-      locations: locationsString,
+      locations: locations, // Pass the array directly
       travelMode: vehicle,
       maxAlternatives: 2,
       traffic: true,
@@ -388,13 +393,27 @@ export async function getOptimizedRoute(
     }
 
     const processRoute = (route: any): RouteLeg => {
+      // Defensive check for a valid route structure
+      if (!route || !route.legs || route.legs.length === 0 || !route.summary) {
+        console.error("[processRoute] Invalid or incomplete route object received from API:", route);
+        // Return a default/empty RouteLeg to prevent crashing the application
+        return {
+          distanceInMeters: 0,
+          travelTimeInSeconds: 0,
+          trafficDelayInSeconds: 0,
+          geometry: [],
+          instructions: [],
+        };
+      }
+
       const leg = route.legs[0];
       return {
         distanceInMeters: route.summary.lengthInMeters,
         travelTimeInSeconds: route.summary.travelTimeInSeconds,
         trafficDelayInSeconds: route.summary.trafficDelayInSeconds,
-        geometry: leg.points.map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })),
-        instructions: leg.instructions.map((inst: { message: string }) => ({ message: inst.message })),
+        // Defensive check for points and instructions before mapping
+        geometry: (leg.points || []).map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })),
+        instructions: (leg.instructions || []).map((inst: { message: string }) => ({ message: inst.message })),
       };
     };
 
@@ -414,30 +433,35 @@ export async function getOptimizedRoute(
     }));
     console.log("[getOptimizedRoute] Parsed incidents:", incidents);
 
+    // Create smaller summary-only objects to send to the AI to reduce token count.
+    const mainRouteForAI = {
+      distanceInMeters: mainRoute.distanceInMeters,
+      travelTimeInSeconds: mainRoute.travelTimeInSeconds,
+      trafficDelayInSeconds: mainRoute.trafficDelayInSeconds,
+    };
+
+    const alternativeRoutesForAI = alternativeRoutes.map(r => ({
+      distanceInMeters: r.distanceInMeters,
+      travelTimeInSeconds: r.travelTimeInSeconds,
+      trafficDelayInSeconds: r.trafficDelayInSeconds,
+    }));
+
+    // To solve the "Prompt tokens limit exceeded" error, we make the prompt extremely compact.
+    // 1. Remove all unnecessary whitespace from the JSON data by removing the `null, 2` from stringify.
+    // 2. Make the instructions to the AI much more concise.
     const prompt = `
-      You are an AI traffic assistant.
-      Given the following route data, provide a concise summary for the user and analyze the incidents.
-
+      You are a traffic AI. Summarize route data. Analyze incidents.
       Data:
-      - Main Route: ${JSON.stringify(mainRoute, null, 2)}
-      - Alternative Routes: ${JSON.stringify(alternativeRoutes, null, 2)}
-      - Incidents on Main Route: ${JSON.stringify(incidents, null, 2)}
+      Main Route: ${JSON.stringify(mainRouteForAI)}
+      Alternatives: ${JSON.stringify(alternativeRoutesForAI)}
+      Incidents: ${JSON.stringify(incidents)}
 
-      Your response must be a single, valid JSON object with two keys:
-      1. "summary" (string): A brief, user-friendly summary of the route, mentioning the primary route's duration and any significant delays or incidents.
-      2. "incidents" (array): An array of the same incidents you were given, but with an added "details" key (string) for each, explaining the likely impact of that incident in a user-friendly way.
-
-      Example for an incident object in the output array:
-      {
-        "type": "CONSTRUCTION",
-        "summary": "Lane closed due to construction",
-        "position": { "lat": -1.2833, "lng": 36.8167 },
-        "details": "The lane closure for construction is likely to cause significant delays, especially during peak hours. It's best to consider an alternative route if possible."
-      }
+      Return JSON: { "summary": "string", "incidents": [{...incidents, "details": "string"}] }
+      In "details", analyze the incident's impact on the driver.
     `;
 
-    console.log("[getOptimizedRoute] Sending prompt to AI...");
-    const aiResponse = await getAIChatCompletion('gpt-4-turbo', prompt, true);
+    console.log("[getOptimizedRoute] Sending prompt to AI using dedicated routing key...");
+    const aiResponse = await getAIChatCompletion('gpt-4-turbo', prompt, true, 'routing');
     console.log("[getOptimizedRoute] Raw AI Response:", aiResponse);
 
     if (!aiResponse) {
@@ -458,8 +482,15 @@ export async function getOptimizedRoute(
     console.log("[getOptimizedRoute] Successfully created optimized route:", optimizedRoute);
     return optimizedRoute;
 
-  } catch (error) {
-    console.error("[getOptimizedRoute] CATCH BLOCK: An error occurred:", error);
+  } catch (error: any) {
+    // Definitive Fix: Enhanced error logging to show the actual API response.
+    console.error("[getOptimizedRoute] CATCH BLOCK: An error occurred.");
+    if (error.response) {
+      // This will log the detailed error message from the TomTom API if available
+      console.error("API Error Response:", error.response.data);
+    } else {
+      console.error("Full Error Object:", error);
+    }
     return null;
   }
 }

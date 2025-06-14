@@ -3,6 +3,7 @@
  */
 interface AIConfigType {
   apiKey: string | undefined;
+  routingApiKey: string | undefined;
   baseURL: string;
   siteURL: string;
   siteTitle: string;
@@ -15,8 +16,11 @@ interface AIConfigType {
  * It's crucial that VITE_OPENAI_API_KEY is set in your .env file.
  */
 export const AIConfig: AIConfigType = {
-  // Your OpenRouter API key. This is a secret and should not be committed to git.
+  // Your default OpenRouter API key. Used for general tasks.
   apiKey: import.meta.env.VITE_OPENAI_API_KEY,
+
+  // A dedicated, more powerful key for expensive routing tasks.
+  routingApiKey: import.meta.env.VITE_OPENROUTER_ROUTING_API_KEY,
   
   // The base URL for the OpenRouter API.
   baseURL: 'https://openrouter.ai/api/v1',
@@ -28,9 +32,11 @@ export const AIConfig: AIConfigType = {
   siteTitle: 'SmartTraffic AI',
 };
 
+
+
 // In development mode, check if the API key is set and warn the developer if not.
 if (import.meta.env.DEV && !AIConfig.apiKey) {
   console.warn(
-    'OpenAI API key is not configured. Please set VITE_OPENAI_API_KEY in your .env file for AI features to work.'
+    'Default OpenAI API key is not configured. Please set VITE_OPENAI_API_KEY in your .env file for AI features to work.'
   );
-} 
+}
