@@ -9,7 +9,7 @@ import type {
   AreaComparisonData,
   OptimizedRoute,
   RouteLeg,
-  AnalyzedIncident,
+  TrafficIncident,
   VehicleType
 } from './types';
 
@@ -368,16 +368,12 @@ export async function getOptimizedRoute(
   console.log(`[getOptimizedRoute] Starting for vehicle: ${vehicle}`, { origin, destination });
 
   try {
-    // Definitive Fix: Use an array of LngLatLike objects instead of a string.
-    // This is more robust and less prone to formatting errors.
-    const locations = [
-      { lat: origin.lat, lng: origin.lng },
-      { lat: destination.lat, lng: destination.lng },
-    ];
-
     const routeResponse = await services.calculateRoute({
       key: apiKey,
-      locations: locations, // Pass the array directly
+      locations: [
+        { lat: origin.lat, lng: origin.lng },
+        { lat: destination.lat, lng: destination.lng },
+      ],
       travelMode: vehicle,
       maxAlternatives: 2,
       traffic: true,
@@ -392,101 +388,66 @@ export async function getOptimizedRoute(
       return null;
     }
 
-    const processRoute = (route: any): RouteLeg => {
-      // Defensive check for a valid route structure
+    // Helper function to process a single route from the TomTom response.
+    const processRoute = (route: any): { routeLeg: RouteLeg; incidents: TrafficIncident[] } => {
       if (!route || !route.legs || route.legs.length === 0 || !route.summary) {
-        console.error("[processRoute] Invalid or incomplete route object received from API:", route);
-        // Return a default/empty RouteLeg to prevent crashing the application
+        console.error("[processRoute] Invalid or incomplete route object received:", route);
         return {
-          distanceInMeters: 0,
-          travelTimeInSeconds: 0,
-          trafficDelayInSeconds: 0,
-          geometry: [],
-          instructions: [],
+          routeLeg: {
+            distanceInMeters: 0,
+            travelTimeInSeconds: 0,
+            trafficDelayInSeconds: 0,
+            geometry: [],
+            instructions: [],
+          },
+          incidents: [],
         };
       }
 
       const leg = route.legs[0];
-      return {
+      const routeLeg: RouteLeg = {
         distanceInMeters: route.summary.lengthInMeters,
         travelTimeInSeconds: route.summary.travelTimeInSeconds,
         trafficDelayInSeconds: route.summary.trafficDelayInSeconds,
-        // Defensive check for points and instructions before mapping
-        geometry: (leg.points || []).map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })),
-        instructions: (leg.instructions || []).map((inst: { message: string }) => ({ message: inst.message })),
+        geometry: (leg.points || []).map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })).filter((p: { lat: number; lng: number; }) => p.lat != null && p.lng != null),
+        instructions: (leg.instructions || []).map((inst: { message: string }) => ({ message: inst.message })), 
       };
+
+      const incidents: TrafficIncident[] = (route.summary.trafficIncidents || []).map((incident: any) => ({
+        summary: incident.properties.iconCategory,
+        details: incident.properties.events[0]?.description || 'No details',
+        position: {
+          lat: incident.geometry.coordinates[1],
+          lng: incident.geometry.coordinates[0],
+        },
+      }));
+
+      return { routeLeg, incidents };
     };
 
     const mainTomtomRoute = routeResponse.routes[0];
-    const mainRoute = processRoute(mainTomtomRoute);
-    const alternativeRoutes = routeResponse.routes.slice(1).map(processRoute);
-    console.log("[getOptimizedRoute] Processed main route:", mainRoute);
+    const { routeLeg: mainRoute, incidents } = processRoute(mainTomtomRoute);
 
-    const incidentsOnRoute = (mainTomtomRoute.summary as any).trafficIncidents || [];
-    const incidents = incidentsOnRoute.map((incident: any) => ({
-      type: incident.properties.iconCategory,
-      summary: incident.properties.events[0].description,
-      position: {
-        lat: incident.geometry.coordinates[1],
-        lng: incident.geometry.coordinates[0],
-      },
-    }));
+    const alternativeRoutes = routeResponse.routes.slice(1).map(r => processRoute(r).routeLeg);
+
+    console.log("[getOptimizedRoute] Processed main route:", mainRoute);
     console.log("[getOptimizedRoute] Parsed incidents:", incidents);
 
-    // Create smaller summary-only objects to send to the AI to reduce token count.
-    const mainRouteForAI = {
-      distanceInMeters: mainRoute.distanceInMeters,
-      travelTimeInSeconds: mainRoute.travelTimeInSeconds,
-      trafficDelayInSeconds: mainRoute.trafficDelayInSeconds,
-    };
-
-    const alternativeRoutesForAI = alternativeRoutes.map(r => ({
-      distanceInMeters: r.distanceInMeters,
-      travelTimeInSeconds: r.travelTimeInSeconds,
-      trafficDelayInSeconds: r.trafficDelayInSeconds,
-    }));
-
-    // To solve the "Prompt tokens limit exceeded" error, we make the prompt extremely compact.
-    // 1. Remove all unnecessary whitespace from the JSON data by removing the `null, 2` from stringify.
-    // 2. Make the instructions to the AI much more concise.
-    const prompt = `
-      You are a traffic AI. Summarize route data. Analyze incidents.
-      Data:
-      Main Route: ${JSON.stringify(mainRouteForAI)}
-      Alternatives: ${JSON.stringify(alternativeRoutesForAI)}
-      Incidents: ${JSON.stringify(incidents)}
-
-      Return JSON: { "summary": "string", "incidents": [{...incidents, "details": "string"}] }
-      In "details", analyze the incident's impact on the driver.
-    `;
-
-    console.log("[getOptimizedRoute] Sending prompt to AI using dedicated routing key...");
-    const aiResponse = await getAIChatCompletion('gpt-4-turbo', prompt, true, 'routing');
-    console.log("[getOptimizedRoute] Raw AI Response:", aiResponse);
-
-    if (!aiResponse) {
-      console.error("AI service returned an empty response.");
-      return null;
-    }
-
-    const parsedResponse = JSON.parse(aiResponse) as { summary: string; incidents: AnalyzedIncident[] };
-    console.log("[getOptimizedRoute] Parsed AI Response:", parsedResponse);
+    const summary = `Fastest route: ${(mainRoute.distanceInMeters / 1000).toFixed(1)} km, estimated travel time is ${Math.round(mainRoute.travelTimeInSeconds / 60)} minutes.`;
 
     const optimizedRoute: OptimizedRoute = {
-      aiSummary: parsedResponse.summary,
+      summary: summary,
       mainRoute: mainRoute,
       alternativeRoutes: alternativeRoutes,
-      incidents: parsedResponse.incidents,
+      incidents: incidents,
     };
 
     console.log("[getOptimizedRoute] Successfully created optimized route:", optimizedRoute);
     return optimizedRoute;
 
   } catch (error: any) {
-    // Definitive Fix: Enhanced error logging to show the actual API response.
-    console.error("[getOptimizedRoute] CATCH BLOCK: An error occurred.");
-    if (error.response) {
-      // This will log the detailed error message from the TomTom API if available
+    console.error('[getOptimizedRoute] CATCH BLOCK: An error occurred.');
+    if (error.response && error.response.data) {
       console.error("API Error Response:", error.response.data);
     } else {
       console.error("Full Error Object:", error);

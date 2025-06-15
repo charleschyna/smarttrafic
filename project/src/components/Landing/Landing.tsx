@@ -71,11 +71,11 @@ const Landing: React.FC = () => {
   ];
 
   const handleGetStarted = () => {
-    navigate('/dashboard');
+    navigate('/login');
   };
 
   const handleSignIn = () => {
-    navigate('/dashboard');
+    navigate('/login');
   };
 
   return (

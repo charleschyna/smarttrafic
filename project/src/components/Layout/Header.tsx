@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Menu, LogOut, BellRing, MapPin } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { supabase } from '../../lib/supabaseClient';
+import { useNavigate } from 'react-router-dom';
 
 interface HeaderProps {
   toggleSidebar: () => void;
@@ -8,6 +11,15 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ toggleSidebar }) => {
   const [scrolled, setScrolled] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const { user } = useAuth();
+  const navigate = useNavigate();
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    alert("You've been successfully signed out. See you again soon!");
+    navigate('/');
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -74,23 +86,45 @@ const Header: React.FC<HeaderProps> = ({ toggleSidebar }) => {
             )}
           </div>
           
-          <div className="flex items-center ml-2">
-            <div className="mr-3 text-right hidden sm:block">
-              <p className="text-sm font-medium text-secondary-900">Jane Kamau</p>
-              <p className="text-xs text-gray-500">Urban Planner</p>
-            </div>
-            <div className="relative">
-              <button className="w-9 h-9 rounded-full bg-gray-200 flex items-center justify-center overflow-hidden border-2 border-white">
-                <img 
-                  src="https://images.pexels.com/photos/733872/pexels-photo-733872.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=1" 
-                  alt="Profile" 
-                  className="w-full h-full object-cover"
-                />
-              </button>
-            </div>
-            <button className="ml-2 p-2 rounded-full hover:bg-gray-100 hidden sm:flex">
-              <LogOut size={18} className="text-secondary-700" />
+          <div className="relative">
+            <button onClick={() => setProfileOpen(!profileOpen)} className="flex items-center ml-2 cursor-pointer">
+              <div className="mr-3 text-right hidden sm:block">
+                <p className="text-sm font-medium text-secondary-900">
+                  {user?.user_metadata?.full_name || user?.email}
+                </p>
+                <p className="text-xs text-gray-500">
+                  Authenticated User
+                </p>
+              </div>
+              <div className="w-9 h-9 rounded-full bg-primary-100 text-primary-600 flex items-center justify-center overflow-hidden border-2 border-white">
+                {user?.user_metadata?.avatar_url ? (
+                  <img 
+                    src={user.user_metadata.avatar_url}
+                    alt="Profile" 
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <span className="font-semibold">
+                    {user?.email?.charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
             </button>
+            {profileOpen && (
+              <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg py-2 z-40 border border-gray-200">
+                <div className="px-4 py-3 border-b border-gray-100">
+                  <p className="text-sm font-medium text-secondary-900 truncate">{user?.user_metadata?.full_name || 'User'}</p>
+                  <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+                </div>
+                <button
+                  onClick={handleSignOut}
+                  className="w-full text-left px-4 py-2 text-sm text-secondary-700 hover:bg-gray-100 flex items-center"
+                >
+                  <LogOut size={16} className="mr-2" />
+                  Sign Out
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

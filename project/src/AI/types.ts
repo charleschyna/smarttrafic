@@ -77,11 +77,11 @@ export interface RouteInstruction {
 }
 
 /**
- * Represents a traffic incident on a route, analyzed by the AI.
+ * Represents a traffic incident on a route.
  */
-export interface AnalyzedIncident {
-  summary: string;
-  details: string;
+export interface TrafficIncident {
+  summary: string; // e.g., 'CONSTRUCTION', 'JAM'
+  details: string; // TomTom-specific incident ID
   position: { lat: number; lng: number };
 }
 
@@ -97,13 +97,13 @@ export interface RouteLeg {
 }
 
 /**
- * Represents the complete AI-analyzed result for a route optimization query.
+ * Represents the complete result for a route optimization query.
  */
 export interface OptimizedRoute {
-  aiSummary: string;
+  summary: string;
   mainRoute: RouteLeg;
   alternativeRoutes: RouteLeg[];
-  incidents: AnalyzedIncident[];
+  incidents: TrafficIncident[];
 }
 
 /**

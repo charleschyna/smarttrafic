@@ -128,8 +128,12 @@ const RouteOptimizer: React.FC = () => {
   const handleSearch = async (query: string, isOrigin: boolean) => {
     if (!query || !apiKey) return;
     try {
-      // Focus search on Kenya
-      const response = await services.fuzzySearch({ key: apiKey, query: `${query}, Nairobi, KE` });
+      // Focus search on Kenya and prioritize locations over streets
+      const response = await services.fuzzySearch({
+        key: apiKey,
+        query: `${query}, Nairobi, KE`,
+        entityTypeSet: 'Municipality,MunicipalitySubdivision,Neighbourhood'
+      });
       if (isOrigin) setOriginResults(response.results || []);
       else setDestinationResults(response.results || []);
     } catch (err) {
@@ -182,7 +186,7 @@ const RouteOptimizer: React.FC = () => {
   
   // Calculate and display the optimal route
   const handleFindRoute = async () => {
-    if (!origin || !destination || !mapInstance.current) {
+    if (!origin?.position?.lat || !origin?.position?.lng || !destination?.position?.lat || !destination?.position?.lng || !mapInstance.current) {
       setError('Please select both an origin and a destination.');
       return;
     }
@@ -259,7 +263,7 @@ const RouteOptimizer: React.FC = () => {
               name: result.address.freeformAddress,
               position: { 
                 lat: result.position.lat, 
-                lng: result.position.lng // Corrected from .lon to .lng
+                lng: result.position.lon // Correctly map lon to lng
               }
             });
           }}

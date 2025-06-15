@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, ArrowDown, AlertTriangle, ThumbsUp } from 'lucide-react';
+import { ArrowRight, ArrowDown, ArrowUp, AlertTriangle, ThumbsUp } from 'lucide-react';
 
 const ScenarioResults: React.FC = () => {
   return (
