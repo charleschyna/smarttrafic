@@ -10,7 +10,9 @@ import type {
   OptimizedRoute,
   RouteLeg,
   TrafficIncident,
-  VehicleType
+  VehicleType,
+  PredictiveAnalyticsData,
+  HeatmapDataPoint
 } from './types';
 
 // Function to get traffic flow data from TomTom API using multi-point sampling
@@ -516,6 +518,98 @@ export async function predictTraffic(
     };
   } catch (error) {
     console.error('Error predicting traffic:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'An unknown error occurred.',
+    };
+  }
+}
+
+/**
+ * Fetches and processes all data needed for the Predictive Analytics page.
+ * @param centerLocation The central location for the overall trend analysis.
+ * @param timeFrame The time frame for the congestion trend chart.
+ * @returns A complete dataset for the analytics page.
+ */
+export async function getPredictiveAnalyticsData(
+  centerLocation: { lat: number; lng: number },
+  timeFrame: TimeFrame
+): Promise<AIResponse<PredictiveAnalyticsData>> {
+  try {
+    console.log('[getPredictiveAnalyticsData] Starting...');
+
+    // 1. Define key areas for heatmap analysis (can be made dynamic later)
+    const keyAreas = [
+      { name: 'CBD', location: { lat: -1.286389, lng: 36.817223 } },
+      { name: 'Westlands', location: { lat: -1.2651, lng: 36.8018 } },
+      { name: 'Upper Hill', location: { lat: -1.299, lng: 36.816 } },
+      { name: 'Thika Road', location: { lat: -1.218, lng: 36.889 } },
+    ];
+
+    // 2. Generate a single, comprehensive AI prompt for all heatmap forecasts
+    const heatmapPrompt = `
+      You are a world-class traffic prediction AI for Nairobi, Kenya. Based on typical traffic patterns, time of day, and day of the week, generate a congestion forecast for the following key areas over three time horizons: 1 hour, 4 hours, and 24 hours.
+
+      Key Areas:
+      ${JSON.stringify(keyAreas.map(a => a.name))}
+
+      Current Time: ${new Date().toLocaleString('en-US', { timeZone: 'Africa/Nairobi' })}
+
+      Your response MUST be a single, valid JSON object. Do not include any text before or after the JSON. The JSON object must have keys "oneHour", "fourHour", and "twentyFourHour". Each key should contain an array of objects, one for each area, in the following strict format:
+      {
+        "area": "Area Name",
+        "congestion": 75, // A percentage from 0 to 100
+        "trend": "up" // "up", "down", or "stable"
+      }
+
+      Example for one key:
+      "oneHour": [
+        { "area": "CBD", "congestion": 65, "trend": "stable" },
+        { "area": "Westlands", "congestion": 72, "trend": "up" }
+      ]
+    `;
+
+    const aiHeatmapResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', heatmapPrompt, true);
+    if (!aiHeatmapResponse) {
+      throw new Error('Received an empty heatmap response from the AI service.');
+    }
+
+    let parsedHeatmaps: {
+      oneHour: HeatmapDataPoint[];
+      fourHour: HeatmapDataPoint[];
+      twentyFourHour: HeatmapDataPoint[];
+    };
+    try {
+      parsedHeatmaps = JSON.parse(aiHeatmapResponse);
+      // Basic validation
+      if (!parsedHeatmaps.oneHour || !parsedHeatmaps.fourHour || !parsedHeatmaps.twentyFourHour) {
+        throw new Error('Malformed heatmap data from AI.');
+      }
+    } catch (e) {
+      console.error('Failed to parse AI heatmap response:', aiHeatmapResponse);
+      throw new Error('AI returned malformed heatmap JSON.');
+    }
+
+    // 3. Get data for the trends chart
+    // We need flowData for this, let's fetch it for the center location
+    const flowData = await getTrafficFlowData(centerLocation, 5); // Using a 5km radius for the overall trend
+    const trendsData = await getCongestionForecast(flowData, timeFrame);
+
+    // 4. Combine into the final structure
+    const analyticsData: PredictiveAnalyticsData = {
+      heatmaps: parsedHeatmaps,
+      trends: trendsData,
+    };
+
+    console.log('[getPredictiveAnalyticsData] Successfully generated data:', analyticsData);
+
+    return {
+      success: true,
+      data: analyticsData,
+    };
+
+  } catch (error) {
+    console.error('[getPredictiveAnalyticsData] Error:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'An unknown error occurred.',

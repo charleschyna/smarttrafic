@@ -64,6 +64,27 @@ export interface AreaComparisonData {
 }
 
 /**
+ * Represents a single data point for a congestion heatmap.
+ */
+export interface HeatmapDataPoint {
+  area: string;
+  congestion: number; // Percentage
+  trend: 'up' | 'down' | 'stable';
+}
+
+/**
+ * Represents the complete dataset for the Predictive Analytics page.
+ */
+export interface PredictiveAnalyticsData {
+  heatmaps: {
+    oneHour: HeatmapDataPoint[];
+    fourHour: HeatmapDataPoint[];
+    twentyFourHour: HeatmapDataPoint[];
+  };
+  trends: CongestionForecast[];
+}
+
+/**
  * =======================================================================
  * Route Optimization Types
  * =======================================================================

@@ -1,14 +1,124 @@
-import React, { useState } from 'react';
-import { Clock, Download, Filter } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Download, Filter, AlertTriangle, Loader } from 'lucide-react';
 import PageHeader from '../components/Common/PageHeader';
 import FilterBar from '../components/Common/FilterBar';
 import CongestionChart from '../components/Charts/CongestionChart';
 import HeatmapCard from '../components/PredictiveAnalytics/HeatmapCard';
-import { congestionByHour, forecastData } from '../data/mockData';
+import { getPredictiveAnalyticsData } from '../AI/services';
+import type { PredictiveAnalyticsData } from '../AI/types';
+import type { TimeFrame } from '../components/Charts/CongestionChart';
 
 const PredictiveAnalytics: React.FC = () => {
   const [activeTab, setActiveTab] = useState('heatmaps');
-  
+  const [analyticsData, setAnalyticsData] = useState<PredictiveAnalyticsData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [timeFrame, setTimeFrame] = useState<TimeFrame>('today');
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setLoading(true);
+      setError(null);
+      // Using Nairobi CBD as the default location for the trend analysis
+      const location = { lat: -1.286389, lng: 36.817223 };
+
+      const response = await getPredictiveAnalyticsData(location, timeFrame);
+
+      if (response.success && response.data) {
+        setAnalyticsData(response.data);
+      } else {
+        setError(response.error || 'Failed to fetch predictive data.');
+      }
+      setLoading(false);
+    };
+
+    fetchData();
+  }, [timeFrame]); // Re-fetch when timeFrame changes
+
+  const renderContent = () => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center h-96">
+          <Loader className="animate-spin text-primary-500" size={48} />
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="flex flex-col items-center justify-center h-96 bg-red-50 text-red-700 rounded-lg p-6">
+          <AlertTriangle size={48} className="mb-4" />
+          <h3 className="text-lg font-medium">An Error Occurred</h3>
+          <p>{error}</p>
+        </div>
+      );
+    }
+
+    if (!analyticsData) {
+      return (
+        <div className="flex items-center justify-center h-96">
+          <p>No analytics data available.</p>
+        </div>
+      );
+    }
+
+    // Data transformation for HeatmapCard
+    const transformHeatmapData = (data: typeof analyticsData.heatmaps.oneHour) => {
+        return data.map(item => ({ area: item.area, level: item.congestion }));
+    };
+
+    switch (activeTab) {
+      case 'heatmaps':
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 animate-fade-in">
+            <HeatmapCard 
+              title="1-Hour Forecast" 
+              period="Next Hour" 
+              data={transformHeatmapData(analyticsData.heatmaps.oneHour)}
+            />
+            <HeatmapCard 
+              title="4-Hour Forecast" 
+              period="Next 4 Hours" 
+              data={transformHeatmapData(analyticsData.heatmaps.fourHour)}
+            />
+            <HeatmapCard 
+              title="24-Hour Forecast" 
+              period="Next 24 Hours" 
+              data={transformHeatmapData(analyticsData.heatmaps.twentyFourHour)}
+            />
+          </div>
+        );
+      case 'trends':
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
+            <CongestionChart 
+                data={analyticsData.trends} 
+                activeTimeFrame={timeFrame}
+                onTimeFrameChange={setTimeFrame}
+            />
+            <div className="bg-white rounded-lg shadow-sm p-4">
+              <h3 className="text-base font-medium text-secondary-900 mb-4">Weekly Comparison</h3>
+              <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
+                <div className="text-center">
+                  <Filter size={24} className="mx-auto text-secondary-400 mb-2" />
+                  <p className="text-secondary-600">Feature coming soon.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      case 'forecasts':
+        return (
+            <div className="bg-white rounded-lg shadow-sm p-6 animate-fade-in">
+                <h3 className="text-lg font-medium text-secondary-900 mb-4">AI Summary</h3>
+                <p className="text-secondary-600">Detailed AI-powered text forecasts and summaries will be available here soon.</p>
+            </div>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div>
       <PageHeader 
@@ -61,108 +171,8 @@ const PredictiveAnalytics: React.FC = () => {
         </div>
       </div>
       
-      {activeTab === 'heatmaps' && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <HeatmapCard 
-            title="1-Hour Forecast" 
-            period="Next Hour" 
-            data={forecastData.oneHour}
-          />
-          <HeatmapCard 
-            title="4-Hour Forecast" 
-            period="Next 4 Hours" 
-            data={forecastData.fourHour}
-          />
-          <HeatmapCard 
-            title="24-Hour Forecast" 
-            period="Next 24 Hours" 
-            data={forecastData.twentyFourHour}
-          />
-        </div>
-      )}
-      
-      {activeTab === 'trends' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <CongestionChart data={congestionByHour} />
-          
-          {/* Placeholder for trend comparison chart */}
-          <div className="bg-white rounded-lg shadow-sm p-4">
-            <h3 className="text-base font-medium text-secondary-900 mb-4">Weekly Comparison</h3>
-            <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-              <div className="text-center">
-                <Filter size={24} className="mx-auto text-secondary-400 mb-2" />
-                <p className="text-secondary-600">Select filters to view comparison data</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      
-      {activeTab === 'forecasts' && (
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h3 className="text-lg font-medium text-secondary-900">AI Traffic Forecast</h3>
-            <div className="flex items-center text-sm text-secondary-500">
-              <Clock size={16} className="mr-1.5" />
-              <span>Last updated: Today, 10:45 AM</span>
-            </div>
-          </div>
-          
-          <div className="mb-6">
-            <div className="h-64 bg-gray-100 rounded-lg overflow-hidden relative">
-              <div style={{ 
-                backgroundImage: `url(https://images.pexels.com/photos/417023/pexels-photo-417023.jpeg?auto=compress&cs=tinysrgb&w=1260&h=750&dpr=1)`, 
-                backgroundSize: 'cover',
-                backgroundPosition: 'center',
-                height: '100%',
-                opacity: 0.7
-              }}></div>
-              
-              {/* Overlay showing congestion forecast */}
-              <div className="absolute inset-0">
-                <div className="absolute top-1/4 left-1/4 w-1/3 h-1/3 bg-accent-500/40 rounded-full"></div>
-                <div className="absolute bottom-1/3 right-1/4 w-1/4 h-1/4 bg-warning-500/40 rounded-full"></div>
-                <div className="absolute top-1/2 right-1/3 w-1/5 h-1/5 bg-primary-500/40 rounded-full"></div>
-              </div>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h4 className="font-medium text-secondary-900 mb-2">Morning Forecast (6AM-12PM)</h4>
-              <p className="text-sm text-secondary-700 mb-2">
-                Expect heavy congestion on Thika Road between 7AM and 9AM.
-              </p>
-              <div className="flex items-center text-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-accent-500 mr-1.5"></div>
-                <span className="text-secondary-700">75% Congestion</span>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h4 className="font-medium text-secondary-900 mb-2">Afternoon Forecast (12PM-5PM)</h4>
-              <p className="text-sm text-secondary-700 mb-2">
-                Moderate traffic expected in CBD and Westlands areas.
-              </p>
-              <div className="flex items-center text-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-warning-500 mr-1.5"></div>
-                <span className="text-secondary-700">55% Congestion</span>
-              </div>
-            </div>
-            
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h4 className="font-medium text-secondary-900 mb-2">Evening Forecast (5PM-8PM)</h4>
-              <p className="text-sm text-secondary-700 mb-2">
-                Heavy traffic expected on all major highways out of the city.
-              </p>
-              <div className="flex items-center text-sm">
-                <div className="w-2.5 h-2.5 rounded-full bg-accent-500 mr-1.5"></div>
-                <span className="text-secondary-700">80% Congestion</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderContent()}
+
     </div>
   );
 };
