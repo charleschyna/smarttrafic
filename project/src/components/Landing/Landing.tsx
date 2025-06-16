@@ -13,6 +13,7 @@ import {
   Star
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import nairobiBg from '../../assests/images.jpeg';
 
 const Landing: React.FC = () => {
   const navigate = useNavigate();
@@ -172,7 +173,7 @@ const Landing: React.FC = () => {
               <div className="bg-white rounded-2xl shadow-2xl p-6 transform rotate-3 hover:rotate-0 transition-transform duration-500">
                 <div className="h-64 bg-gradient-to-br from-primary-100 to-primary-200 rounded-lg overflow-hidden relative">
                   <div style={{ 
-                    backgroundImage: `url(https://images.pexels.com/photos/417023/pexels-photo-417023.jpeg?auto=compress&cs=tinysrgb&w=800&h=600&dpr=1)`, 
+                    backgroundImage: `url(${nairobiBg})`,
                     backgroundSize: 'cover',
                     backgroundPosition: 'center',
                     height: '100%',
