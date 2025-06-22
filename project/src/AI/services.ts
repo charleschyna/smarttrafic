@@ -242,39 +242,83 @@ export async function generateTrafficInsights(
       // We can still proceed with partial or no data, the prompt will handle it.
     }
 
-    // 2. Create a new, simpler and more direct prompt.
-    const prompt = `You are an expert traffic analyst AI. Your task is to provide a clear and concise summary of the traffic conditions based on the provided real-time data.
+    // 2. Get current date and time for the report
+    const now = new Date();
+    const reportTime = now.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+    const reportDate = now.toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
 
-Core Instructions:
-1.  Analyze the Data: Base your entire report only on the data below. Do not invent information.
-2.  Handle Missing Data: If a data feed is marked as 'Feed offline', you must clearly state this and explain what it means for the analysis. For example: "The incident data feed is offline, so this report is based solely on general traffic flow."
-3.  Be Professional: Write in a clear, professional tone. Do not use any markdown formatting (like bolding or italics).
+    // 3. Create a new, detailed prompt for a comprehensive report.
+    const prompt = `
+      You are a world-class traffic analysis AI. Your task is to generate a detailed, real-time traffic report for a specific location.
 
-Real-Time Data Feeds:
-*   Traffic Flow: ${JSON.stringify(flowData || 'Feed offline', null, 2)}
-*   Traffic Incidents: ${JSON.stringify(incidentData || 'Feed offline', null, 2)}
+      **Report Context:**
+      - **Location:** ${location.address || 'Not specified'}
+      - **Area Radius:** ${radius} km
+      - **Date:** ${reportDate}
+      - **Time of Report:** ${reportTime}
 
-Your Report:
+      **Instructions:**
+      1.  **Analyze Real-Time Data:** Base your entire report *only* on the data provided below. Do not use outside knowledge or invent information.
+      2.  **Structure and Formatting:** Generate the report using Markdown for clear, readable formatting. Use headings, bullet points, and bold text as appropriate.
+      3.  **Handle Missing Data:** If a data feed is marked as 'Feed offline', you must clearly state this and explain its impact on the report's accuracy. For example: "The incident data feed is offline, so this report is based solely on general traffic flow and may not include specific blockages."
+      4.  **Be Detailed and Practical:** Provide actionable insights. Instead of just stating numbers, explain what they mean for a driver.
 
-1. Overall Summary:
-(Provide a one-sentence summary of the traffic conditions.)
+      **Real-Time Data Feeds:**
+      - **Traffic Flow Data:** ${JSON.stringify(flowData || 'Feed offline', null, 2)}
+      - **Traffic Incidents Data:** ${JSON.stringify(
+        incidentData || 'Feed offline',
+        null,
+        2
+      )}
 
-2. Incident Report:
-(If incident data is online and contains incidents, describe them. If the feed is offline or there are no incidents, state that clearly.)
+      ---
 
-3. Traffic Flow Analysis:
-(Analyze the traffic flow data, comparing current speed to free-flow speed. If the feed is offline, state that.)
+      **Your Generated Traffic Report:**
 
-4. Forecast:
-(Provide a brief, one-sentence forecast based on the available data.)`;
+      ### **Traffic Report: ${location.address || 'Selected Area'}**
+      *Generated on ${reportDate} at ${reportTime}*
 
-    // 3. Get the summary from the AI.
-    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, false);
+      #### **1. Executive Summary**
+      (Provide a 2-3 sentence summary of the overall traffic situation. Mention the congestion level and any major incidents.)
+
+      #### **2. Current Traffic Flow Analysis**
+      (Analyze the traffic flow data. Compare the average current speed to the free-flow speed and describe the congestion level in simple terms (e.g., "light," "moderate," "heavy"). **Strictly do not include any mathematical formulas or raw calculations.** Instead, provide a "Travel Time Impact" analysis. For example: "This level of congestion will likely add an extra 5-10 minutes to a typical 15-minute journey through this area.")
+
+      #### **3. Active Incidents Report**
+      (Analyze the 'Traffic Incidents Data'.
+      - List each significant incident from the data. For each incident, provide:
+        - **Description:** From the 'description' field.
+        - **Severity:** From the 'magnitudeOfDelay' field (e.g., Major, Minor).
+        - **Impact:** Briefly explain the likely impact on traffic.
+      - If the data is offline or there are no incidents, state: "No major incidents reported in this area.")
+
+      #### **4. Short-Term Forecast (Next 1-2 Hours)**
+      (Based on the current data and time of day, provide a brief forecast. For example: "Congestion is expected to worsen as the evening rush hour begins." or "Traffic should begin to ease within the next hour.")
+
+      #### **5. Recommendations for Drivers**
+      (Provide 1-2 actionable recommendations. For example: "Drivers are advised to use alternative routes to avoid the incident on Main St." or "Consider delaying travel by 30 minutes to avoid the worst of the congestion.")
+    `;
+
+    // 4. Get the summary from the AI.
+    const aiResponse = await getAIChatCompletion(
+      'deepseek/deepseek-r1-0528-qwen3-8b:free',
+      prompt,
+      false
+    );
 
     if (!aiResponse) {
       throw new Error('Received an empty response from the AI service.');
     }
-    
+
     // The data is now a string summary based on real data.
     return {
       success: true,

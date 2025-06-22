@@ -5,14 +5,16 @@ import FilterBar from '../components/Common/FilterBar';
 import CongestionMap from '../components/Dashboard/CongestionMap';
 import KpiCard from '../components/Dashboard/KpiCard';
 import InsightsList from '../components/Dashboard/InsightsList';
+import ReportHistory from '../components/Dashboard/ReportHistory';
 import CongestionChart, { TimeFrame } from '../components/Charts/CongestionChart';
 import AreaComparisonChart from '../components/Charts/AreaComparisonChart';
 import IncidentsModal from '../components/Dashboard/IncidentsModal';
 import StatsModal from '../components/Dashboard/StatsModal'; // Import the new stats modal
 import { getDashboardData } from '../AI/services';
-import { insights } from '../data/mockData'; // Keep mock data for other charts for now
+import { City, kenyanCities } from '../data/cities';
 
 const Dashboard: React.FC = () => {
+  const [selectedCity, setSelectedCity] = React.useState<City>(kenyanCities[0]);
   const [dashboardData, setDashboardData] = React.useState<any>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
@@ -21,6 +23,9 @@ const Dashboard: React.FC = () => {
   const [isTravelTimeModalOpen, setIsTravelTimeModalOpen] = React.useState(false);
   const [timeFrame, setTimeFrame] = React.useState<TimeFrame>('today');
 
+  const handleCityChange = (city: City) => {
+    setSelectedCity(city);
+  };
 
   const handleTimeFrameChange = (newTimeFrame: TimeFrame) => {
     setTimeFrame(newTimeFrame);
@@ -28,9 +33,8 @@ const Dashboard: React.FC = () => {
 
   React.useEffect(() => {
     const fetchData = async () => {
-      // Using a default location for now. This can be made dynamic later.
-      const location = { lat: -1.2921, lng: 36.8219 }; // Nairobi
-      const radius = 3; // 15km. Set to cover the entire Nairobi area.
+      const location = { lat: selectedCity.lat, lng: selectedCity.lng };
+      const radius = 10; // 10km radius for all cities for consistency
 
       try {
         setLoading(true);
@@ -48,7 +52,7 @@ const Dashboard: React.FC = () => {
     };
 
     fetchData();
-  }, [timeFrame]);
+  }, [timeFrame, selectedCity]);
   const dateTime = new Date().toLocaleString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -71,7 +75,11 @@ const Dashboard: React.FC = () => {
         }
       />
       
-      <FilterBar />
+      <FilterBar 
+        cities={kenyanCities}
+        selectedCity={selectedCity}
+        onCityChange={handleCityChange}
+      />
       
       {loading && <p>Loading dashboard data...</p>}
       {error && <p className="text-red-500">Error: {error}</p>}
@@ -113,6 +121,7 @@ const Dashboard: React.FC = () => {
             isOpen={isModalOpen} 
             onClose={() => setIsModalOpen(false)} 
             incidents={dashboardData?.incidents || []} 
+            cityName={selectedCity.name}
           />
 
           <StatsModal
@@ -152,7 +161,10 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
             <div>
-              <InsightsList insights={insights} />
+              <InsightsList />
+              <div className="mt-6">
+                <ReportHistory />
+              </div>
             </div>
           </div>
         </>

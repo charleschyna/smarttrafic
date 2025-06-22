@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { MapPin, Search, RefreshCw, FileText } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import { db } from '../../db';
 import { generateTrafficInsights } from '../../AI/services';
 
 interface Location {
@@ -14,7 +16,7 @@ const InsightsList: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [userLocation, setUserLocation] = useState<Location | null>(null);
-  const [searchRadius, setSearchRadius] = useState(5); // Kept for consistency, but not used by new prompt
+  const searchRadius = 5; // Radius is fixed at 5km as there's no UI to change it.
   const [searchAddress, setSearchAddress] = useState('');
   const [isAutoDetecting, setIsAutoDetecting] = useState(false);
 
@@ -76,6 +78,13 @@ const InsightsList: React.FC = () => {
       
       // The data is now a string
       setTrafficSummary(response.data);
+
+      // Save the report to the database
+      await db.reports.add({
+        content: response.data,
+        location: userLocation,
+        createdAt: new Date(),
+      });
 
     } catch (err: any) {
       console.error('Error generating insights:', err);
@@ -185,12 +194,9 @@ const InsightsList: React.FC = () => {
         {trafficSummary && (
           <div className="bg-gray-50 p-6 rounded-lg">
             <h2 className="text-xl font-bold text-gray-800 mb-4">Live Traffic Report</h2>
-            {/* Split the summary by newlines and render as paragraphs */}
-            {trafficSummary.split('\n').map((paragraph, index) => (
-              <p key={index} className="text-gray-700 leading-relaxed mb-4">
-                {paragraph}
-              </p>
-            ))}
+            <div className="prose prose-sm max-w-none">
+              <ReactMarkdown>{trafficSummary}</ReactMarkdown>
+            </div>
           </div>
         )}
       </div>
