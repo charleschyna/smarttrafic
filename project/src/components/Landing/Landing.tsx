@@ -14,6 +14,8 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import nairobiBg from '../../assests/images.jpeg';
+import TeamSection from './TeamSection';
+import ContactSection from './ContactSection';
 
 const Landing: React.FC = () => {
   const navigate = useNavigate();
@@ -352,7 +354,10 @@ const Landing: React.FC = () => {
         </div>
       </section>
 
-      {/* CTA Section */}
+      <TeamSection />
+      <ContactSection />
+
+      {/* Call to Action */}
       <section className="py-20 bg-gradient-to-r from-primary-600 to-primary-700">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h2 className="text-3xl lg:text-4xl font-bold text-white mb-6">

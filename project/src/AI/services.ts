@@ -575,6 +575,31 @@ export async function predictTraffic(
  * @param timeFrame The time frame for the congestion trend chart.
  * @returns A complete dataset for the analytics page.
  */
+// Define the shape of the contact form data
+interface ContactFormData {
+  name: string;
+  email: string;
+  message: string;
+}
+
+/**
+ * Mocks submitting a contact form.
+ * In a real application, this would send data to a backend API.
+ * @param formData The data from the contact form.
+ * @returns A promise that resolves to a success status.
+ */
+export const submitContactForm = async (
+  formData: ContactFormData
+): Promise<{ success: boolean; error?: string }> => {
+  console.log('Simulating contact form submission with data:', formData);
+
+  // Simulate network delay
+  await new Promise(resolve => setTimeout(resolve, 1500));
+
+  // Always return success for now
+  return { success: true };
+};
+
 export async function getPredictiveAnalyticsData(
   centerLocation: { lat: number; lng: number },
   timeFrame: TimeFrame
