@@ -16,7 +16,7 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ isOpen }) => {
   const navItems = [
-    { id: 'dashboard', path: '/', icon: <LayoutDashboard size={20} />, label: 'Dashboard Overview' },
+    { id: 'dashboard', path: '/dashboard', icon: <LayoutDashboard size={20} />, label: 'Dashboard Overview' },
     { id: 'route', path: '/route-optimization', icon: <Route size={20} />, label: 'Route Optimization' },
     { id: 'analytics', path: '/predictive-analytics', icon: <LineChart size={20} />, label: 'Predictive Analytics' },
     { id: 'simulation', path: '/scenario-simulation', icon: <GitCompare size={20} />, label: 'Scenario Simulation' },

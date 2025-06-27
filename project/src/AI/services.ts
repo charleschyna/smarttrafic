@@ -66,35 +66,30 @@ async function getTrafficFlowData(location: { lat: number; lng: number }, radius
     return null;
   }
 
-  // Use a weighted average to give more importance to the central point
-  const centerPointWeight = 0.4; // 40% weight to the center
-  const edgePointWeight = 0.6 / (validResults.length - 1); // Remaining 60% distributed among other points
+  // Simplified to a more robust simple average to prevent calculation errors.
+  const totalStats = validResults.reduce((acc, result) => {
+    const data = result.flowSegmentData;
+    // Ensure we have the necessary data before including it in the average.
+    if (data.currentTravelTime !== undefined && data.freeFlowTravelTime !== undefined) {
+      acc.totalCurrentSpeed += data.currentSpeed || 0;
+      acc.totalFreeFlowSpeed += data.freeFlowSpeed || 0;
+      acc.totalCurrentTravelTime += data.currentTravelTime;
+      acc.totalFreeFlowTravelTime += data.freeFlowTravelTime;
+      acc.count++;
+    }
+    return acc;
+  }, { totalCurrentSpeed: 0, totalFreeFlowSpeed: 0, totalCurrentTravelTime: 0, totalFreeFlowTravelTime: 0, count: 0 });
 
-  const weightedStats = validResults.reduce((acc, result, index) => {
-      const data = result.flowSegmentData;
-      const isCenterPoint = (index === Math.floor(points.length / 2));
-      const weight = isCenterPoint ? centerPointWeight : edgePointWeight;
-
-      if (data.currentSpeed !== undefined && data.freeFlowSpeed !== undefined) {
-          acc.totalCurrentSpeed += data.currentSpeed * weight;
-          acc.totalFreeFlowSpeed += data.freeFlowSpeed * weight;
-          acc.totalCurrentTravelTime += data.currentTravelTime * weight;
-          acc.totalFreeFlowTravelTime += data.freeFlowTravelTime * weight;
-          acc.totalWeight += weight;
-      }
-      return acc;
-  }, { totalCurrentSpeed: 0, totalFreeFlowSpeed: 0, totalCurrentTravelTime: 0, totalFreeFlowTravelTime: 0, totalWeight: 0 });
-
-  if (weightedStats.totalWeight === 0) {
-      return null;
+  if (totalStats.count === 0) {
+    return null;
   }
 
   return {
-      currentSpeed: weightedStats.totalCurrentSpeed / weightedStats.totalWeight,
-      freeFlowSpeed: weightedStats.totalFreeFlowSpeed / weightedStats.totalWeight,
-      currentTravelTime: weightedStats.totalCurrentTravelTime / weightedStats.totalWeight,
-      freeFlowTravelTime: weightedStats.totalFreeFlowTravelTime / weightedStats.totalWeight,
-      confidence: 1, // We are creating an aggregate, so confidence is high.
+    currentSpeed: totalStats.totalCurrentSpeed / totalStats.count,
+    freeFlowSpeed: totalStats.totalFreeFlowSpeed / totalStats.count,
+    currentTravelTime: totalStats.totalCurrentTravelTime / totalStats.count,
+    freeFlowTravelTime: totalStats.totalFreeFlowTravelTime / totalStats.count,
+    confidence: 1, // We are creating an aggregate, so confidence is high.
   };
 }
 
@@ -144,7 +139,7 @@ async function getCongestionForecast(flowData: TrafficFlowData | null, timeFrame
   `;
 
   try {
-    const aiResponse = await getAIChatCompletion('gpt-3.5-turbo', prompt, true);
+    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, true);
     const parsedResponse = JSON.parse(aiResponse);
 
     // The AI sometimes wraps the array in an object, so we handle that.
@@ -183,7 +178,7 @@ async function getAreaComparisonData(flowData: TrafficFlowData | null): Promise<
   `;
 
   try {
-    const aiResponse = await getAIChatCompletion('gpt-3.5-turbo', prompt, true);
+    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, true);
     const parsedResponse = JSON.parse(aiResponse);
 
     // The AI sometimes wraps the array in an object, so we handle that.
@@ -333,6 +328,39 @@ export async function generateTrafficInsights(
   }
 }
 
+// Uses AI to generate a percentage comparison against the previous week for key metrics.
+async function getHistoricalComparison(congestionLevel: number, avgTripTime: number, activeIncidents: number) {
+  const prompt = `Given the current city congestion level is ${congestionLevel}%, the average trip time is ${avgTripTime} minutes, and there are ${activeIncidents} active incidents, provide a percentage comparison for each of these metrics against the typical data for the same time last week.
+  Return ONLY a valid JSON object with keys 'congestionTrend', 'avgTripTimeTrend', 'activeIncidentsTrend'.
+  Each key's value should be an object with two properties:
+  1. 'value' (number): The percentage change. Use a positive number for an increase and a negative number for a decrease. For example, a 10% decrease is -10.
+  2. 'isPositive' (boolean): This should be true if the change is an improvement (e.g., less congestion, lower travel time, fewer incidents) and false otherwise.
+  For example: { "congestionTrend": { "value": -10, "isPositive": true }, "avgTripTimeTrend": { "value": -15, "isPositive": true }, "activeIncidentsTrend": { "value": 20, "isPositive": false } }`;
+
+  try {
+    const response = await getAIChatCompletion(prompt);
+    const jsonResponse = JSON.parse(response);
+
+    // Basic validation
+    if (jsonResponse.congestionTrend && jsonResponse.avgTripTimeTrend && jsonResponse.activeIncidentsTrend) {
+      return { success: true, data: jsonResponse };
+    } else {
+      throw new Error("Invalid JSON structure from AI response.");
+    }
+  } catch (error) {
+    console.error('[getHistoricalComparison] Error:', error);
+    // Provide a default/fallback structure on error to prevent UI crashes
+    return {
+      success: false,
+      data: {
+        congestionTrend: { value: 0, isPositive: false },
+        avgTripTimeTrend: { value: 0, isPositive: false },
+        activeIncidentsTrend: { value: 0, isPositive: false },
+      },
+    };
+  }
+}
+
 // Function to get aggregated data for the dashboard
 export async function getDashboardData(location: { lat: number; lng: number }, radius: number, timeFrame: TimeFrame) {
   try {
@@ -354,17 +382,15 @@ export async function getDashboardData(location: { lat: number; lng: number }, r
         console.warn('Could not calculate congestion level due to missing or invalid travel time data.');
     }
 
-    // Log the raw data for debugging
-    console.log('Raw flow data for congestion calculation:', {
-        currentTravelTime: flowData?.currentTravelTime,
-        freeFlowTravelTime: flowData?.freeFlowTravelTime,
-    });
-
     const avgTripTime = flowData ? Math.round(flowData.currentTravelTime / 60) : 0;
     const activeIncidents = incidentData?.incidents?.length || 0;
 
-    // Log the calculated level for debugging
-    console.log('Calculated Congestion Level (% delay):', congestionLevel);
+    // Get historical comparison
+    const historicalComparison = await getHistoricalComparison(
+      congestionLevel,
+      avgTripTime,
+      activeIncidents
+    );
 
     return {
       success: true,
@@ -376,6 +402,7 @@ export async function getDashboardData(location: { lat: number; lng: number }, r
         freeFlowTravelTime: flowData?.freeFlowTravelTime || 0,
         congestionForecast, // Add the forecast to the payload
         areaComparisonData, // Add the area comparison data
+        trends: historicalComparison.data, // Add the new trend data
       }
     };
   } catch (error) {

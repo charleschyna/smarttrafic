@@ -37,7 +37,7 @@ const Dashboard: React.FC = () => {
       const radius = 10; // 10km radius for all cities for consistency
 
       try {
-        setLoading(true);
+        // No setLoading(true) here to prevent flickering on refresh
         const response = await getDashboardData(location, radius, timeFrame);
         if (response.success) {
           setDashboardData(response.data);
@@ -47,12 +47,18 @@ const Dashboard: React.FC = () => {
       } catch (err) {
         setError('An unexpected error occurred.');
       } finally {
-        setLoading(false);
+        setLoading(false); // Always ensure loading is turned off
       }
     };
 
-    fetchData();
+    setLoading(true); // Set loading for the initial fetch
+    fetchData(); // Initial fetch
+
+    const intervalId = setInterval(fetchData, 30000); // Poll every 30 seconds
+
+    return () => clearInterval(intervalId); // Cleanup interval
   }, [timeFrame, selectedCity]);
+
   const dateTime = new Date().toLocaleString('en-US', {
     weekday: 'long',
     year: 'numeric',
@@ -92,7 +98,7 @@ const Dashboard: React.FC = () => {
                 value={dashboardData?.congestionLevel} 
                 unit="%" 
                 icon={BarChart4}
-                trend={{ value: 5, isPositive: false }} // Trend can be made dynamic later
+                trend={dashboardData?.trends?.congestionTrend}
                 color="bg-primary-500"
               />
             </button>
@@ -102,7 +108,7 @@ const Dashboard: React.FC = () => {
                 value={dashboardData?.avgTripTime} 
                 unit="minutes" 
                 icon={Clock}
-                trend={{ value: 8, isPositive: false }} // Trend can be made dynamic later
+                trend={dashboardData?.trends?.avgTripTimeTrend}
                 color="bg-warning-500"
               />
             </button>
@@ -111,7 +117,7 @@ const Dashboard: React.FC = () => {
                 title="Active Incidents" 
                 value={dashboardData?.activeIncidents} 
                 icon={AlertCircle}
-                trend={{ value: 2, isPositive: true }} // Trend can be made dynamic later
+                trend={dashboardData?.trends?.activeIncidentsTrend}
                 color="bg-accent-500"
               />
             </button>
