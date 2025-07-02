@@ -55,39 +55,23 @@ const WaypointOptimizer: React.FC<WaypointOptimizerProps> = ({ apiKey, onRouteOp
     setError(null);
 
     try {
-      const result = await tt.services.routeOptimization({
+      // Use the correct TomTom waypoint optimization API
+      const locations = [
+        { lat: depot.position[1], lng: depot.position[0] }, // depot as first location
+        ...waypoints.map(wp => ({ lat: wp.position[1], lng: wp.position[0] }))
+      ];
+
+      const result = await tt.services.waypointOptimization({
         key: apiKey,
-        locations: [
-          {
-            point: {
-              latitude: depot.position[1],
-              longitude: depot.position[0]
-            },
-            isDepot: true
-          },
-          ...waypoints.map(wp => ({
-            point: {
-              latitude: wp.position[1],
-              longitude: wp.position[0]
-            },
-            serviceTime: wp.serviceTime
-          }))
-        ],
-        options: {
-          fleet: {
-            vehicles: Array(vehicles).fill({
-              profile: 'car',
-              maxLocations: 25
-            })
-          },
-          traffic: true
-        }
+        locations: locations,
+        avoidTraffic: true,
+        computeTravelTimeFor: 'all'
       });
 
       onRouteOptimized(result);
     } catch (err) {
       console.error('Route optimization error:', err);
-      setError('Failed to optimize route');
+      setError('Failed to optimize route. Please check your API key and try again.');
     } finally {
       setIsOptimizing(false);
     }

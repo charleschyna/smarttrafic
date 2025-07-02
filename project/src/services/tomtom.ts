@@ -135,4 +135,9 @@ export class TomTomService {
   }
 }
 
-export default new TomTomService('YOUR_API_KEY'); 
+// Initialize with environment variable
+const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+if (!apiKey) {
+  console.error('VITE_TOMTOM_API_KEY is not configured in environment variables');
+}
+export default new TomTomService(apiKey || '');

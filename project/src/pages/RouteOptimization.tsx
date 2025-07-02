@@ -1,9 +1,9 @@
 import React from 'react';
-import RouteOptimizer from '../components/RouteOptimization/RouteOptimizer';
+import ModernRouteOptimizer from '../components/RouteOptimization/ModernRouteOptimizer';
 
 const RouteOptimization: React.FC = () => {
   return (
-    <RouteOptimizer />
+    <ModernRouteOptimizer />
   );
 };
 

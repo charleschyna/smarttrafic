@@ -122,6 +122,7 @@ export interface RouteLeg {
  */
 export interface OptimizedRoute {
   summary: string;
+  aiSummary: string;
   mainRoute: RouteLeg;
   alternativeRoutes: RouteLeg[];
   incidents: TrafficIncident[];

@@ -1,6 +1,7 @@
 import { getAIChatCompletion } from './AIService';
 import type { TimeFrame } from '../components/Charts/CongestionChart';
 import { services } from '@tomtom-international/web-sdk-services';
+import { decodePolyline, simplifyRoute } from '../utils/polylineDecoder';
 import type {
   TrafficPrediction,
   AIResponse,
@@ -139,7 +140,7 @@ async function getCongestionForecast(flowData: TrafficFlowData | null, timeFrame
   `;
 
   try {
-    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, true);
+    const aiResponse = await getAIChatCompletion('deepseek/deepseek-chat', prompt, true);
     const parsedResponse = JSON.parse(aiResponse);
 
     // The AI sometimes wraps the array in an object, so we handle that.
@@ -178,7 +179,7 @@ async function getAreaComparisonData(flowData: TrafficFlowData | null): Promise<
   `;
 
   try {
-    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, true);
+    const aiResponse = await getAIChatCompletion('deepseek/deepseek-chat', prompt, true);
     const parsedResponse = JSON.parse(aiResponse);
 
     // The AI sometimes wraps the array in an object, so we handle that.
@@ -305,7 +306,7 @@ export async function generateTrafficInsights(
 
     // 4. Get the summary from the AI.
     const aiResponse = await getAIChatCompletion(
-      'deepseek/deepseek-r1-0528-qwen3-8b:free',
+      'deepseek/deepseek-chat',
       prompt,
       false
     );
@@ -330,6 +331,15 @@ export async function generateTrafficInsights(
 
 // Uses AI to generate a percentage comparison against the previous week for key metrics.
 async function getHistoricalComparison(congestionLevel: number, avgTripTime: number, activeIncidents: number) {
+  // If we have no data, don't bother calling the AI.
+  if (congestionLevel === 0 && avgTripTime === 0 && activeIncidents === 0) {
+    console.warn('[getHistoricalComparison] No data available to generate comparison. Returning default.');
+    return {
+      congestionTrend: { value: 0, isPositive: false },
+      avgTripTimeTrend: { value: 0, isPositive: false },
+      activeIncidentsTrend: { value: 0, isPositive: false },
+    };
+  }
   const prompt = `Given the current city congestion level is ${congestionLevel}%, the average trip time is ${avgTripTime} minutes, and there are ${activeIncidents} active incidents, provide a percentage comparison for each of these metrics against the typical data for the same time last week.
   Return ONLY a valid JSON object with keys 'congestionTrend', 'avgTripTimeTrend', 'activeIncidentsTrend'.
   Each key's value should be an object with two properties:
@@ -338,7 +348,7 @@ async function getHistoricalComparison(congestionLevel: number, avgTripTime: num
   For example: { "congestionTrend": { "value": -10, "isPositive": true }, "avgTripTimeTrend": { "value": -15, "isPositive": true }, "activeIncidentsTrend": { "value": 20, "isPositive": false } }`;
 
   try {
-    const response = await getAIChatCompletion(prompt);
+    const response = await getAIChatCompletion('openai/gpt-3.5-turbo', prompt, true);
     const jsonResponse = JSON.parse(response);
 
     // Basic validation
@@ -430,86 +440,497 @@ export async function getDashboardData(location: { lat: number; lng: number }, r
 export async function getOptimizedRoute(
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
-  vehicle: VehicleType
+  vehicle: VehicleType,
+  options: { avoidTolls?: boolean; avoidHighways?: boolean } = {}
 ): Promise<OptimizedRoute | null> {
   const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
+  
+  console.log('[getOptimizedRoute] API Key check:', {
+    hasApiKey: !!apiKey,
+    keyLength: apiKey?.length || 0,
+    keyStart: apiKey?.substring(0, 8) || 'undefined'
+  });
+  
   if (!apiKey) {
     console.error('[getOptimizedRoute] TomTom API key is not configured.');
+    console.error('[getOptimizedRoute] Make sure VITE_TOMTOM_API_KEY is set in your .env file');
     return null;
   }
 
-  console.log(`[getOptimizedRoute] Starting for vehicle: ${vehicle}`, { origin, destination });
+  console.log(`[getOptimizedRoute] Starting for vehicle: ${vehicle}`, { origin, destination, options });
+
+  // Helper function to process a single route from the TomTom response.
+  const processRoute = (route: any, fallbackOrigin: { lat: number; lng: number }, fallbackDestination: { lat: number; lng: number }): { routeLeg: RouteLeg; incidents: TrafficIncident[] } => {
+    console.log('[processRoute] Processing route:', route);
+    
+    if (!route || !route.summary) {
+      console.error("[processRoute] Invalid or incomplete route object received:", route);
+      return {
+        routeLeg: {
+          distanceInMeters: 0,
+          travelTimeInSeconds: 0,
+          trafficDelayInSeconds: 0,
+          geometry: [],
+          instructions: [],
+        },
+        incidents: [],
+      };
+    }
+
+    // Extract geometry from different possible locations in the TomTom response
+    let geometry: { lat: number; lng: number }[] = [];
+    
+    console.log('[processRoute] Route structure keys:', Object.keys(route));
+    
+    // Method 1: Check for guidance instructions with point coordinates
+    if (route.guidance && route.guidance.instructions) {
+      console.log('[processRoute] Found guidance instructions:', route.guidance.instructions.length);
+      const allPoints: { lat: number; lng: number }[] = [];
+      
+      route.guidance.instructions.forEach((instruction: any, index: number) => {
+        console.log(`[processRoute] Instruction ${index}:`, instruction);
+        if (instruction.point) {
+          allPoints.push({
+            lat: instruction.point.latitude,
+            lng: instruction.point.longitude
+          });
+        }
+      });
+      
+      if (allPoints.length > 0) {
+        geometry = allPoints;
+        console.log('[processRoute] Extracted geometry from guidance instructions:', geometry.length, 'points');
+      }
+    }
+    
+    // Method 2: Check for route legs with detailed points
+    if (geometry.length === 0 && route.legs && route.legs.length > 0) {
+      console.log('[processRoute] Checking legs for points, legs count:', route.legs.length);
+      const leg = route.legs[0];
+      console.log('[processRoute] First leg keys:', Object.keys(leg));
+      
+      if (leg.points && leg.points.length > 0) {
+        console.log('[processRoute] Found leg points:', leg.points.length);
+        geometry = leg.points.map((p: { latitude: number; longitude: number }) => ({
+          lat: p.latitude,
+          lng: p.longitude
+        })).filter((p: { lat: number; lng: number }) => p.lat != null && p.lng != null);
+        console.log('[processRoute] Extracted geometry from leg points:', geometry.length, 'points');
+      }
+    }
+    
+    // Method 3: Check for route sections (TomTom often uses this)
+    if (geometry.length === 0 && route.sections && route.sections.length > 0) {
+      console.log('[processRoute] Checking sections for geometry, sections count:', route.sections.length);
+      const allSectionPoints: { lat: number; lng: number }[] = [];
+      
+      route.sections.forEach((section: any, sectionIndex: number) => {
+        console.log(`[processRoute] Section ${sectionIndex} keys:`, Object.keys(section));
+        
+        // Method 3a: Decode polyline from section
+        if (section.polyline) {
+          console.log(`[processRoute] Section ${sectionIndex} has polyline:`, section.polyline.substring(0, 100) + '...');
+          try {
+            const decodedPoints = decodePolyline(section.polyline);
+            if (decodedPoints.length > 0) {
+              console.log(`[processRoute] Successfully decoded ${decodedPoints.length} points from section ${sectionIndex} polyline`);
+              // Simplify the route to avoid too many points
+              const simplifiedPoints = simplifyRoute(decodedPoints, 2);
+              allSectionPoints.push(...simplifiedPoints);
+            }
+          } catch (error) {
+            console.error(`[processRoute] Failed to decode polyline for section ${sectionIndex}:`, error);
+          }
+        }
+        
+        // Method 3b: Check for points array in section
+        if (section.points && section.points.length > 0) {
+          console.log(`[processRoute] Section ${sectionIndex} has ${section.points.length} points`);
+          section.points.forEach((p: any) => {
+            if (p.latitude !== undefined && p.longitude !== undefined) {
+              allSectionPoints.push({
+                lat: p.latitude,
+                lng: p.longitude
+              });
+            }
+          });
+        }
+      });
+      
+      if (allSectionPoints.length > 0) {
+        geometry = allSectionPoints;
+        console.log('[processRoute] Extracted geometry from sections:', geometry.length, 'points');
+      }
+    }
+    
+    // Method 3c: Check for top-level polyline in route
+    if (geometry.length === 0 && route.polyline) {
+      console.log('[processRoute] Found top-level polyline:', route.polyline.substring(0, 100) + '...');
+      try {
+        const decodedPoints = decodePolyline(route.polyline);
+        if (decodedPoints.length > 0) {
+          console.log(`[processRoute] Successfully decoded ${decodedPoints.length} points from top-level polyline`);
+          // Simplify the route to avoid too many points
+          geometry = simplifyRoute(decodedPoints, 2);
+          console.log('[processRoute] Extracted geometry from top-level polyline:', geometry.length, 'points');
+        }
+      } catch (error) {
+        console.error('[processRoute] Failed to decode top-level polyline:', error);
+      }
+    }
+    
+    // Method 4: Check the summary for start/end points and create intermediate points
+    if (geometry.length === 0 && route.summary) {
+      console.log('[processRoute] Checking summary for departure/arrival points');
+      
+      if (route.summary.departureLocation && route.summary.arrivalLocation) {
+        const depLoc = route.summary.departureLocation;
+        const arrLoc = route.summary.arrivalLocation;
+        
+        console.log('[processRoute] Found departure/arrival locations:', { depLoc, arrLoc });
+        
+        // Create a simple path with start and end points
+        geometry = [
+          { lat: depLoc.latitude, lng: depLoc.longitude },
+          { lat: arrLoc.latitude, lng: arrLoc.longitude }
+        ];
+        
+        console.log('[processRoute] Created basic geometry from summary locations:', geometry.length, 'points');
+      }
+    }
+    
+    // Enhanced fallback: Create detailed geometry by interpolating between waypoints
+    if (geometry.length === 0) {
+      console.warn('[processRoute] No detailed geometry found, creating interpolated path');
+      
+      // Try to extract waypoints from instructions for more realistic routing
+      let waypoints = [];
+      
+      if (route.guidance && route.guidance.instructions) {
+        console.log('[processRoute] Extracting waypoints from guidance instructions');
+        waypoints = route.guidance.instructions
+          .filter((inst: any) => inst.point)
+          .map((inst: any) => ({
+            lat: inst.point.latitude,
+            lng: inst.point.longitude
+          }));
+        console.log('[processRoute] Found', waypoints.length, 'waypoints from instructions');
+      }
+      
+      // If no waypoints from instructions, create intermediate points
+      if (waypoints.length === 0) {
+        console.log('[processRoute] Creating interpolated waypoints between origin and destination');
+        const steps = 10; // Create 10 intermediate points for smoother curve
+        waypoints = [];
+        
+        for (let i = 0; i <= steps; i++) {
+          const ratio = i / steps;
+          const lat = fallbackOrigin.lat + (fallbackDestination.lat - fallbackOrigin.lat) * ratio;
+          const lng = fallbackOrigin.lng + (fallbackDestination.lng - fallbackOrigin.lng) * ratio;
+          
+          // Add slight randomness to avoid perfectly straight line (simulate road curves)
+          const randomOffset = 0.001; // Small offset for more realistic path
+          const offsetLat = lat + (Math.random() - 0.5) * randomOffset;
+          const offsetLng = lng + (Math.random() - 0.5) * randomOffset;
+          
+          waypoints.push({ lat: offsetLat, lng: offsetLng });
+        }
+        console.log('[processRoute] Created', waypoints.length, 'interpolated waypoints');
+      }
+      
+      // Ensure we always have start and end points
+      if (waypoints.length === 0 || 
+          (waypoints[0].lat !== fallbackOrigin.lat || waypoints[0].lng !== fallbackOrigin.lng)) {
+        waypoints.unshift({ lat: fallbackOrigin.lat, lng: fallbackOrigin.lng });
+      }
+      
+      if (waypoints.length === 0 || 
+          (waypoints[waypoints.length - 1].lat !== fallbackDestination.lat || 
+           waypoints[waypoints.length - 1].lng !== fallbackDestination.lng)) {
+        waypoints.push({ lat: fallbackDestination.lat, lng: fallbackDestination.lng });
+      }
+      
+      geometry = waypoints;
+      console.log('[processRoute] Final geometry with', geometry.length, 'points:', geometry.slice(0, 3), '...', geometry.slice(-3));
+    }
+    
+    // Extract instructions
+    let instructions: { message: string }[] = [];
+    if (route.guidance && route.guidance.instructions) {
+      instructions = route.guidance.instructions.map((inst: any) => ({
+        message: inst.message || inst.instruction || 'Turn instruction'
+      }));
+    } else if (route.legs && route.legs[0] && route.legs[0].instructions) {
+      instructions = route.legs[0].instructions.map((inst: any) => ({
+        message: inst.message || inst.instruction || 'Turn instruction'
+      }));
+    }
+
+    const routeLeg: RouteLeg = {
+      distanceInMeters: route.summary.lengthInMeters || 0,
+      travelTimeInSeconds: route.summary.travelTimeInSeconds || 0,
+      trafficDelayInSeconds: route.summary.trafficDelayInSeconds || 0,
+      geometry: geometry,
+      instructions: instructions,
+    };
+    
+    console.log('[processRoute] Created routeLeg:', {
+      distanceInMeters: routeLeg.distanceInMeters,
+      travelTimeInSeconds: routeLeg.travelTimeInSeconds,
+      trafficDelayInSeconds: routeLeg.trafficDelayInSeconds,
+      geometryPoints: routeLeg.geometry.length,
+      instructionsCount: routeLeg.instructions.length
+    });
+
+    // Extract traffic incidents
+    const incidents: TrafficIncident[] = [];
+    if (route.summary && route.summary.trafficIncidents) {
+      route.summary.trafficIncidents.forEach((incident: any) => {
+        try {
+          incidents.push({
+            summary: incident.properties?.iconCategory || 'Traffic incident',
+            details: incident.properties?.events?.[0]?.description || 'No details available',
+            position: {
+              lat: incident.geometry?.coordinates?.[1] || 0,
+              lng: incident.geometry?.coordinates?.[0] || 0,
+            },
+          });
+        } catch (err) {
+          console.warn('[processRoute] Failed to process incident:', incident, err);
+        }
+      });
+    }
+
+    return { routeLeg, incidents };
+  };
 
   try {
-    const routeResponse = await services.calculateRoute({
-      key: apiKey,
-      locations: [
-        { lat: origin.lat, lng: origin.lng },
-        { lat: destination.lat, lng: destination.lng },
-      ],
-      travelMode: vehicle,
-      maxAlternatives: 2,
-      traffic: true,
-      computeTravelTimeFor: 'all',
-      instructionsType: 'text',
-      routeType: 'fastest',
-    });
-    console.log("[getOptimizedRoute] TomTom API Response:", routeResponse);
+    // Enhanced coordinate validation
+    const validateCoordinate = (coord, name, type) => {
+      if (typeof coord !== 'number') {
+        console.error(`[getOptimizedRoute] ${name} ${type} is not a number:`, coord, typeof coord);
+        return false;
+      }
+      if (isNaN(coord)) {
+        console.error(`[getOptimizedRoute] ${name} ${type} is NaN:`, coord);
+        return false;
+      }
+      if (type === 'latitude' && (coord < -90 || coord > 90)) {
+        console.error(`[getOptimizedRoute] ${name} latitude out of range:`, coord);
+        return false;
+      }
+      if (type === 'longitude' && (coord < -180 || coord > 180)) {
+        console.error(`[getOptimizedRoute] ${name} longitude out of range:`, coord);
+        return false;
+      }
+      return true;
+    };
 
-    if (!routeResponse || !routeResponse.routes || routeResponse.routes.length === 0) {
-      console.error("[getOptimizedRoute] No routes found by TomTom API.", routeResponse);
+    if (!validateCoordinate(origin.lat, 'Origin', 'latitude') ||
+        !validateCoordinate(origin.lng, 'Origin', 'longitude') ||
+        !validateCoordinate(destination.lat, 'Destination', 'latitude') ||
+        !validateCoordinate(destination.lng, 'Destination', 'longitude')) {
+      console.error('[getOptimizedRoute] Invalid coordinates provided:', { origin, destination });
       return null;
     }
 
-    // Helper function to process a single route from the TomTom response.
-    const processRoute = (route: any): { routeLeg: RouteLeg; incidents: TrafficIncident[] } => {
-      if (!route || !route.legs || route.legs.length === 0 || !route.summary) {
-        console.error("[processRoute] Invalid or incomplete route object received:", route);
-        return {
-          routeLeg: {
-            distanceInMeters: 0,
-            travelTimeInSeconds: 0,
-            trafficDelayInSeconds: 0,
-            geometry: [],
-            instructions: [],
-          },
-          incidents: [],
-        };
+    // Build avoid parameters based on options
+    const avoid = [];
+    if (options.avoidTolls) avoid.push('tollRoads');
+    if (options.avoidHighways) avoid.push('motorways');
+
+    // Use direct TomTom Routing API to get detailed road geometry
+    const routeTypes = ['fastest', 'shortest', 'eco'];
+    const routePromises = routeTypes.map(async (routeType) => {
+      try {
+        console.log(`[getOptimizedRoute] Calculating ${routeType} route using direct TomTom API...`);
+        
+        // Map vehicle types correctly
+        const travelMode = vehicle === 'bicycle' ? 'bicycle' : vehicle === 'pedestrian' ? 'pedestrian' : 'car';
+        
+        // Build avoid parameters
+        const avoidParams = avoid.length > 0 ? `&avoid=${avoid.join(',')}` : '';
+        
+        // Construct the TomTom Routing API URL with proper parameters for geometry
+        const baseUrl = 'https://api.tomtom.com/routing/1/calculateRoute';
+        const locations = `${origin.lat},${origin.lng}:${destination.lat},${destination.lng}`;
+        
+        // Build URL parameters properly to force detailed geometry
+        const urlParams = new URLSearchParams({
+          key: apiKey,
+          travelMode: travelMode,
+          routeType: routeType,
+          traffic: 'true',
+          computeTravelTimeFor: 'all',
+          instructionsType: 'text',
+          computeBestOrder: 'false',
+          language: 'en-GB',
+          // Force detailed route geometry
+          guidance: 'true',
+          routeRepresentation: 'polyline',
+          sectionType: 'traffic',
+          report: 'effectiveSettings'
+        });
+        
+        // Add avoid parameters if they exist
+        if (avoid.length > 0) {
+          urlParams.append('avoid', avoid.join(','));
+        }
+        
+        const url = `${baseUrl}/${locations}/json?${urlParams.toString()}`;
+        
+        console.log(`[getOptimizedRoute] Direct API URL for ${routeType}:`);
+        console.log(url);
+        
+        const response = await fetch(url);
+        
+        console.log(`[getOptimizedRoute] Response status for ${routeType}: ${response.status}`);
+        console.log(`[getOptimizedRoute] Response headers for ${routeType}:`, Object.fromEntries(response.headers.entries()));
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error(`[getOptimizedRoute] HTTP ${response.status} for ${routeType}:`, errorText);
+          
+          // Check for specific TomTom API errors
+          if (response.status === 403) {
+            console.error('[getOptimizedRoute] API Key authentication failed - check VITE_TOMTOM_API_KEY');
+          } else if (response.status === 400) {
+            console.error('[getOptimizedRoute] Bad request - check coordinate format and parameters');
+          } else if (response.status === 404) {
+            console.error('[getOptimizedRoute] Route not found - coordinates may be in invalid location');
+          }
+          
+          throw new Error(`HTTP ${response.status}: ${response.statusText} - ${errorText}`);
+        }
+        
+        const data = await response.json();
+        console.log(`[getOptimizedRoute] Direct API response for ${routeType}:`, data);
+        
+        // Check if we have routes in the response
+        if (!data.routes || data.routes.length === 0) {
+          console.warn(`[getOptimizedRoute] No routes returned for ${routeType}`);
+          return { type: routeType, response: null };
+        }
+        
+        return { type: routeType, response: data };
+      } catch (error) {
+        console.error(`[getOptimizedRoute] Direct API failed for ${routeType}, trying TomTom SDK fallback:`, error);
+        
+        // Fallback to TomTom SDK if direct API fails
+        try {
+          console.log(`[getOptimizedRoute] Attempting SDK fallback for ${routeType}...`);
+          const sdkResponse = await services.calculateRoute({
+            key: apiKey,
+            locations: [
+              { lat: origin.lat, lng: origin.lng },
+              { lat: destination.lat, lng: destination.lng },
+            ],
+            travelMode: travelMode,
+            routeType,
+            traffic: true,
+            computeTravelTimeFor: 'all',
+            instructionsType: 'text',
+            avoid: avoid.length > 0 ? avoid : undefined
+          });
+          
+          console.log(`[getOptimizedRoute] SDK fallback successful for ${routeType}:`, sdkResponse);
+          
+          // Format SDK response to match expected structure
+          const formattedResponse = {
+            routes: sdkResponse.routes || []
+          };
+          
+          return { type: routeType, response: formattedResponse };
+        } catch (sdkError) {
+          console.error(`[getOptimizedRoute] SDK fallback also failed for ${routeType}:`, sdkError);
+          return { type: routeType, response: null };
+        }
       }
+    });
 
-      const leg = route.legs[0];
-      const routeLeg: RouteLeg = {
-        distanceInMeters: route.summary.lengthInMeters,
-        travelTimeInSeconds: route.summary.travelTimeInSeconds,
-        trafficDelayInSeconds: route.summary.trafficDelayInSeconds,
-        geometry: (leg.points || []).map((p: { latitude: number; longitude: number }) => ({ lat: p.latitude, lng: p.longitude })).filter((p: { lat: number; lng: number; }) => p.lat != null && p.lng != null),
-        instructions: (leg.instructions || []).map((inst: { message: string }) => ({ message: inst.message })), 
+    const routeResults = await Promise.all(routePromises);
+    console.log('[getOptimizedRoute] Route results:', routeResults);
+    
+    const validResults = routeResults.filter(result => {
+      const isValid = result.response && result.response.routes && result.response.routes.length > 0;
+      console.log(`[getOptimizedRoute] Route ${result.type} valid:`, isValid, result.response);
+      return isValid;
+    });
+    
+    if (validResults.length === 0) {
+      console.error('[getOptimizedRoute] No valid routes found from any route type');
+      console.error('[getOptimizedRoute] All route results:', routeResults);
+      
+      // Check if it's an API key issue
+      const errorDetails = routeResults.map(r => r.response).filter(r => r !== null);
+      if (errorDetails.length > 0) {
+        console.error('[getOptimizedRoute] API error details:', errorDetails);
+      }
+      
+      return null;
+    }
+
+    console.log('[getOptimizedRoute] Found', validResults.length, 'valid route types');
+    
+    // Use fastest as main route, others as alternatives
+    const mainRouteData = validResults.find(r => r.type === 'fastest') || validResults[0];
+    const alternativeRouteData = validResults.filter(r => r.type !== 'fastest');
+
+    console.log('[getOptimizedRoute] Main route type:', mainRouteData.type);
+    console.log('[getOptimizedRoute] Alternative route types:', alternativeRouteData.map(r => r.type));
+
+    if (!mainRouteData) {
+      console.error('[getOptimizedRoute] No main route data available');
+      return null;
+    }
+
+    // Process all routes
+    const mainTomtomRoute = mainRouteData.response.routes[0];
+    const { routeLeg: mainRoute, incidents } = processRoute(mainTomtomRoute, origin, destination);
+
+    // Process alternative routes
+    const alternativeRoutes = alternativeRouteData.map(routeData => {
+      const processedRoute = processRoute(routeData.response.routes[0], origin, destination);
+      return {
+        ...processedRoute.routeLeg,
+        type: routeData.type as any // Add the route type
       };
-
-      const incidents: TrafficIncident[] = (route.summary.trafficIncidents || []).map((incident: any) => ({
-        summary: incident.properties.iconCategory,
-        details: incident.properties.events[0]?.description || 'No details',
-        position: {
-          lat: incident.geometry.coordinates[1],
-          lng: incident.geometry.coordinates[0],
-        },
-      }));
-
-      return { routeLeg, incidents };
-    };
-
-    const mainTomtomRoute = routeResponse.routes[0];
-    const { routeLeg: mainRoute, incidents } = processRoute(mainTomtomRoute);
-
-    const alternativeRoutes = routeResponse.routes.slice(1).map(r => processRoute(r).routeLeg);
+    });
 
     console.log("[getOptimizedRoute] Processed main route:", mainRoute);
     console.log("[getOptimizedRoute] Parsed incidents:", incidents);
+
+    // Generate AI summary based on route data
+    const aiSummaryPrompt = `
+      You are a smart route planning assistant. Analyze the following route data and provide a brief, helpful summary for the driver.
+      
+      Main Route:
+      - Distance: ${(mainRoute.distanceInMeters / 1000).toFixed(1)} km
+      - Travel Time: ${Math.round(mainRoute.travelTimeInSeconds / 60)} minutes
+      - Traffic Delay: ${Math.round(mainRoute.trafficDelayInSeconds / 60)} minutes
+      
+      Alternative Routes Available: ${alternativeRoutes.length}
+      Active Incidents: ${incidents.length}
+      
+      Vehicle Type: ${vehicle}
+      Avoid Tolls: ${options.avoidTolls ? 'Yes' : 'No'}
+      Avoid Highways: ${options.avoidHighways ? 'Yes' : 'No'}
+      
+      Provide a concise, actionable summary (2-3 sentences) that highlights the key information a driver needs to know.
+    `;
+    
+    let aiSummary = 'Route calculated successfully.';
+    try {
+      aiSummary = await getAIChatCompletion('openai/gpt-3.5-turbo', aiSummaryPrompt, false);
+    } catch (error) {
+      console.warn('[getOptimizedRoute] Failed to generate AI summary, using fallback');
+    }
 
     const summary = `Fastest route: ${(mainRoute.distanceInMeters / 1000).toFixed(1)} km, estimated travel time is ${Math.round(mainRoute.travelTimeInSeconds / 60)} minutes.`;
 
     const optimizedRoute: OptimizedRoute = {
       summary: summary,
+      aiSummary: aiSummary,
       mainRoute: mainRoute,
       alternativeRoutes: alternativeRoutes,
       incidents: incidents,
@@ -562,7 +983,7 @@ export async function predictTraffic(
       }
       Your analysis must be based solely on the provided data.`;
 
-    const aiResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', prompt, true);
+    const aiResponse = await getAIChatCompletion('deepseek/deepseek-chat', prompt, true);
 
     if (!aiResponse) {
       throw new Error('Received an empty response from the AI service.');
@@ -665,7 +1086,7 @@ export async function getPredictiveAnalyticsData(
       ]
     `;
 
-    const aiHeatmapResponse = await getAIChatCompletion('deepseek/deepseek-r1-0528-qwen3-8b:free', heatmapPrompt, true);
+    const aiHeatmapResponse = await getAIChatCompletion('deepseek/deepseek-chat', heatmapPrompt, true);
     if (!aiHeatmapResponse) {
       throw new Error('Received an empty heatmap response from the AI service.');
     }

@@ -65,7 +65,6 @@ const CongestionMap: React.FC = () => {
 
           const newMap = tt.map(mapConfig);
 
-          // Add error handler for authentication issues
           newMap.on('error', (e: any) => {
             console.error('Map error:', e);
             if (e.error && e.error.status === 403) {
@@ -82,43 +81,8 @@ const CongestionMap: React.FC = () => {
               .addTo(newMap);
             }
 
-            // Enable traffic visualization
-            try {
-              // Add traffic flow layer
-              newMap.addSource('traffic-flow', {
-                type: 'vector',
-                tiles: [`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`]
-              });
-
-              newMap.addLayer({
-                'id': 'traffic-flow',
-                'type': 'line',
-                'source': 'traffic-flow',
-                'source-layer': 'flow',
-                'layout': {
-                  'line-cap': 'round',
-                  'line-join': 'round'
-                },
-                'paint': {
-                  'line-width': 3,
-                  'line-color': [
-                    'match',
-                    ['get', 'currentSpeed'],
-                    4, '#00ff00',  // free flow - green
-                    3, '#ffff00',  // moderate - yellow
-                    2, '#ffa500',  // slow - orange
-                    1, '#ff0000',  // very slow - red
-                    0, '#7f0000',  // stopped - dark red
-                    '#808080'      // default - gray
-                  ],
-                  'line-opacity': 0.8
-                }
-              });
-
-            } catch (err) {
-              console.error('Error enabling traffic:', err);
-            }
-
+            // Traffic visualization is now handled by the stylesVisibility config option.
+            
             setTrafficData([{
               location: center,
               lastUpdated: new Date()
@@ -159,7 +123,6 @@ const CongestionMap: React.FC = () => {
     };
   }, []);
 
-  // Create custom marker element
   const createMarkerElement = () => {
     const element = document.createElement('div');
     element.className = 'custom-marker';
@@ -172,59 +135,18 @@ const CongestionMap: React.FC = () => {
     return element;
   };
 
-  // Update the map style change handler
   useEffect(() => {
     if (mapInstance.current && userLocation) {
       try {
         const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
         const mapName = mapView === 'satellite' ? 'satellite-main' : 'basic-main';
-        const styleUrl = `https://api.tomtom.com/style/1/style/22.1.1-8?map=${mapName}&traffic_incidents=s3&traffic_flow=relative&poi=main&key=${apiKey}`;
+        // The 'stylesVisibility' option handles traffic layers, so we don't need to add them to the URL.
+        const styleUrl = `https://api.tomtom.com/style/1/style/22.1.1-8?map=${mapName}&poi=main&key=${apiKey}`;
 
         mapInstance.current.setStyle(styleUrl);
         
-        // Re-enable traffic visualization after style change
-        mapInstance.current.once('load', () => {
-          try {
-            if (mapInstance.current) {
-              const apiKey = import.meta.env.VITE_TOMTOM_API_KEY;
-              
-              // Re-add traffic flow layer after style change
-              if (!mapInstance.current.getSource('traffic-flow')) {
-                mapInstance.current.addSource('traffic-flow', {
-                  type: 'vector',
-                  tiles: [`https://api.tomtom.com/traffic/map/4/tile/flow/relative/{z}/{x}/{y}.pbf?key=${apiKey}`]
-                });
+        // The 'load' event is no longer needed as we don't manually re-add layers.
 
-                mapInstance.current.addLayer({
-                  'id': 'traffic-flow',
-                  'type': 'line',
-                  'source': 'traffic-flow',
-                  'source-layer': 'flow',
-                  'layout': {
-                    'line-cap': 'round',
-                    'line-join': 'round'
-                  },
-                  'paint': {
-                    'line-width': 3,
-                    'line-color': [
-                      'match',
-                      ['get', 'currentSpeed'],
-                      4, '#00ff00',  // free flow - green
-                      3, '#ffff00',  // moderate - yellow
-                      2, '#ffa500',  // slow - orange
-                      1, '#ff0000',  // very slow - red
-                      0, '#7f0000',  // stopped - dark red
-                      '#808080'      // default - gray
-                    ],
-                    'line-opacity': 0.8
-                  }
-                });
-              }
-            }
-          } catch (err) {
-            console.error('Error re-enabling traffic:', err);
-          }
-        });
       } catch (err) {
         console.error('Error changing map style:', err);
         setError('Failed to change map style. Please try again.');
@@ -232,7 +154,6 @@ const CongestionMap: React.FC = () => {
     }
   }, [mapView, userLocation]);
 
-  // Handle zoom controls
   const handleZoom = (direction: 'in' | 'out') => {
     if (mapInstance.current) {
       const currentZoom = mapInstance.current.getZoom();
@@ -242,7 +163,6 @@ const CongestionMap: React.FC = () => {
 
   return (
     <div className="bg-white rounded-lg shadow-sm overflow-hidden h-[400px] relative">
-      {/* Map Controls */}
       <div className="absolute top-3 left-3 z-10 bg-white rounded-md shadow-sm p-1.5">
         <div className="flex space-x-1">
           <button 
@@ -277,7 +197,6 @@ const CongestionMap: React.FC = () => {
         </div>
       </div>
       
-      {/* Loading State */}
       {isLoading && (
         <div className="absolute inset-0 bg-white/50 backdrop-blur-sm flex items-center justify-center z-20">
           <div className="flex items-center space-x-2">
@@ -287,7 +206,6 @@ const CongestionMap: React.FC = () => {
         </div>
       )}
       
-      {/* Error State */}
       {error && (
         <div className="absolute top-3 left-1/2 transform -translate-x-1/2 z-20 bg-red-50 text-red-600 px-4 py-2 rounded-md flex items-center space-x-2">
           <AlertCircle size={16} />
@@ -295,10 +213,8 @@ const CongestionMap: React.FC = () => {
         </div>
       )}
 
-      {/* Map Container */}
       <div ref={mapElement} className="w-full h-full" />
       
-      {/* Traffic Legend */}
       {!isLoading && (
         <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur-sm p-3 rounded-md shadow-sm z-10">
           <div className="flex items-center justify-between mb-2">
