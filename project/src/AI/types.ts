@@ -55,21 +55,14 @@ export interface CongestionForecast {
   isForecast?: boolean;
 }
 
-/**
- * Represents a single data point for the area comparison chart.
- */
-export interface AreaComparisonData {
-  name: string;
-  congestion: number;
-}
+
 
 /**
  * Represents a single data point for a congestion heatmap.
  */
 export interface HeatmapDataPoint {
-  lat: number;
-  lng: number;
-  weight: number;
+  area: string;
+  congestion: number;
 }
 
 /**
@@ -82,6 +75,74 @@ export interface PredictiveAnalyticsData {
     twentyFourHour: HeatmapDataPoint[];
   };
   trends: CongestionForecast[];
+}
+
+/**
+ * Represents a single hotspot alert for the V2 analytics page.
+ */
+export interface HotspotAlert {
+  id: string;
+  areaName: string;
+  severity: 'High' | 'Medium' | 'Low';
+  predictedCongestion: number;
+  confidence: number;
+  details: string;
+}
+
+/**
+ * Represents a single AI-powered recommendation.
+ */
+export interface AIRecommendation {
+  id: string;
+  title: string;
+  summary: string;
+  priority: 'High' | 'Medium' | 'Low';
+  actionableInsights: string[];
+}
+
+/**
+ * Represents the complete dataset for the V2 Predictive Analytics page.
+ */
+export interface PredictiveAnalyticsV2Data {
+  hotspotAlerts: HotspotAlert[];
+  aiRecommendations: AIRecommendation[];
+}
+
+/**
+ * Represents a single traffic incident for the main dashboard.
+ */
+export interface Incident {
+  id: string;
+  title: string;
+  description: string;
+  severity: 'Critical' | 'High' | 'Medium' | 'Low';
+  timestamp: string;
+}
+
+/**
+ * Represents data for comparing congestion across different areas.
+ */
+export interface AreaComparison {
+  name: string;
+  congestion: number;
+}
+
+/**
+ * Represents the complete dataset for the main dashboard.
+ */
+export interface DashboardData {
+  congestionLevel: number;
+  avgTripTime: number;
+  activeIncidents: number;
+  freeFlowTravelTime: number;
+  trends: {
+    congestionTrend: 'up' | 'down' | 'stable';
+    avgTripTimeTrend: 'up' | 'down' | 'stable';
+    activeIncidentsTrend: 'up' | 'down' | 'stable';
+  };
+  incidents: Incident[];
+  congestionForecast: CongestionForecast[];
+  areaComparisonData: AreaComparison[];
 }
 
 /**
@@ -98,78 +159,50 @@ export interface RouteInstruction {
 }
 
 /**
- * Represents a traffic incident on a route, matching the TomTom API structure.
+ * Represents a route leg from the Mapbox Directions API.
  */
-export interface TrafficIncident {
-  type: 'Feature';
-  properties: {
-    id: string;
-    iconCategory: string;
-    magnitudeOfDelay: number;
-    from: string;
-    to: string;
-    length: number;
-    delay: number;
-    roadNumbers: string[];
-    aci: {
-      probabilityOfOccurrence: string;
-      numberOfReports: number;
-      lastReportTime: string;
+export interface MapboxRouteLeg {
+  distance: number; // in meters
+  duration: number; // in seconds
+  summary: string;
+  steps: {
+    maneuver: {
+      instruction: string;
     };
-  };
-  geometry: {
-    type: 'LineString';
-    coordinates: number[][];
-  };
+  }[];
 }
 
 /**
- * Represents a raw route object from the TomTom API, combining all known properties.
+ * Represents a raw route object from the Mapbox Directions API.
  */
-export interface TomTomRoute {
-  summary: {
-    lengthInMeters: number;
-    travelTimeInSeconds: number;
-    trafficDelayInSeconds: number;
-    departureTime: string;
-    arrivalTime: string;
-    trafficIncidents?: TrafficIncident[];
+export interface MapboxRoute {
+  distance: number; // in meters
+  duration: number; // in seconds
+  duration_traffic: number; // in seconds, with current traffic
+  geometry: {
+    type: 'LineString';
+    coordinates: number[][]; // [lng, lat]
   };
-  legs: {
-    points: { latitude: number; longitude: number }[];
-    instructions?: { message: string }[];
-  }[];
-  sections: {
-    startPointIndex: number;
-    endPointIndex: number;
-    sectionType: string;
-    simpleCategory?: string;
-    effectiveSpeedInKmh?: number;
-    trafficDelayInSeconds?: number;
-  }[];
-  guidance?: {
-    instructions: {
-      message?: string;
-      instruction?: string;
-      street?: string;
-      turnAngle?: number;
-    }[];
-  };
-  [key: string]: any; // Allow other properties for flexibility
+  legs: MapboxRouteLeg[];
+  weight: number;
+  weight_name: string;
+  [key: string]: any; // Allow other properties
 }
 
 /**
  * Represents a route that has been scored and selected.
  */
 export interface ScoredRoute {
-  route: TomTomRoute;
+  route: MapboxRoute;
   score: number;
   confidence: number;
-  [key: string]: any; // Allow other properties for flexibility
+  leg?: RouteLeg; // Include the processed leg for easier access
+  [key: string]: any;
 }
 
 /**
  * Represents the detailed properties of a single calculated route leg.
+ * This is a processed, app-specific format derived from a MapboxRouteLeg.
  */
 export interface RouteLeg {
   distanceInMeters: number;
@@ -183,14 +216,13 @@ export interface RouteLeg {
  * Represents the complete result for a route optimization query.
  */
 export interface OptimizedRoute {
+  bestRoute: ScoredRoute;
   summary: string;
   aiSummary: string;
-  mainRoute: RouteLeg;
-  alternativeRoutes: RouteLeg[];
-  incidents: TrafficIncident[];
+  rawRoutes: MapboxRoute[];
 }
 
 /**
- * Defines the supported vehicle types for route optimization, matching TomTom's API.
+ * Defines the supported vehicle types for route optimization.
  */
-export type VehicleType = 'car' | 'truck' | 'taxi' | 'bus' | 'van' | 'motorcycle' | 'bicycle' | 'pedestrian';
+export type VehicleType = 'car' | 'truck' | 'bicycle' | 'pedestrian';

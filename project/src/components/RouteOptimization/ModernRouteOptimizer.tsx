@@ -8,14 +8,15 @@ import { selectBestRoute } from '../../AI/scoring';
 import { generateRouteSummary } from '../../AI/services';
 import { Map, Search, ArrowRight } from 'lucide-react';
 
-// Helper to convert TomTom routes to GeoJSON for Mapbox
-const toGeoJSON = (tomtomRoutes: any[], bestRouteIndex: number): GeoJSON.FeatureCollection => {
-  if (!tomtomRoutes || tomtomRoutes.length === 0) {
+// Helper to convert Mapbox routes to GeoJSON
+const toGeoJSON = (mapboxRoutes: any[], bestRouteIndex: number): GeoJSON.FeatureCollection => {
+  if (!mapboxRoutes || mapboxRoutes.length === 0) {
     return { type: 'FeatureCollection', features: [] };
   }
 
-  const features: GeoJSON.Feature[] = tomtomRoutes.map((route, index) => {
-    const coordinates = route.legs[0].points.map((p: { latitude: number, longitude: number }) => [p.longitude, p.latitude]);
+  const features: GeoJSON.Feature[] = mapboxRoutes.map((route, index) => {
+    // Mapbox route geometry is already in GeoJSON format
+    const coordinates = route.geometry.coordinates;
     return {
       type: 'Feature',
       geometry: {
@@ -28,7 +29,7 @@ const toGeoJSON = (tomtomRoutes: any[], bestRouteIndex: number): GeoJSON.Feature
     };
   });
 
-  // Ensure the best route is the first feature for rendering order
+  // Ensure the best route is rendered on top
   features.sort((a, b) => (a.properties!.isBest ? -1 : b.properties!.isBest ? 1 : 0));
 
   return { type: 'FeatureCollection', features };
@@ -127,27 +128,29 @@ const ModernRouteOptimizer: React.FC = () => {
 
     try {
       const data = await getDirections(
-        { longitude: startCoords[0], latitude: startCoords[1] },
-        { longitude: endCoords[0], latitude: endCoords[1] },
+        [{ longitude: startCoords[0], latitude: startCoords[1] }, { longitude: endCoords[0], latitude: endCoords[1] }],
         travelMode
       );
 
       if (data && data.routes && data.routes.length > 0) {
+        // NOTE: selectBestRoute and generateRouteSummary still expect TomTom data.
+        // This will be fixed in subsequent steps. For now, we adapt the data as best as possible.
         const bestRouteResult = selectBestRoute(data.routes, userPreference);
+        
         if (bestRouteResult) {
           const { route: bestRoute, confidence, index: bestRouteIndex } = bestRouteResult;
           const geoJsonRoutes = toGeoJSON(data.routes, bestRouteIndex);
           setRoutes(geoJsonRoutes);
 
           setSelectedRouteSummary({
-            distance: bestRoute.summary.lengthInMeters,
-            duration: bestRoute.summary.travelTimeInSeconds,
+            distance: bestRoute.distance,
+            duration: bestRoute.duration,
             confidence: confidence,
-            trafficDelay: bestRoute.summary.trafficDelayInSeconds,
+            trafficDelay: bestRoute.duration_traffic ? bestRoute.duration_traffic - bestRoute.duration : 0,
           });
 
-          const incidents = bestRouteResult.route.summary?.trafficIncidents || [];
-        const summaryText = await generateRouteSummary(bestRouteResult, userPreference, incidents);
+          // Mapbox does not provide incidents in the same way, so we generate the summary without them.
+          const summaryText = await generateRouteSummary(bestRouteResult, userPreference);
           setAiSummary(summaryText);
         } else {
           setError('Could not determine the best route.');

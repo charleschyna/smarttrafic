@@ -15,20 +15,11 @@ function useDebounce(value: string, delay: number) {
   return debouncedValue;
 }
 
-// Updated Suggestion interface for TomTom API to handle POIs
-interface Suggestion {
+// Interface for Mapbox API geocoding results (features)
+interface MapboxFeature {
   id: string;
-  type: string;
-  address: {
-    freeformAddress: string;
-  };
-  position: {
-    lat: number;
-    lon: number;
-  };
-  poi?: {
-    name: string;
-  };
+  place_name: string;
+  center: [number, number]; // [longitude, latitude]
 }
 
 interface LocationInputProps {
@@ -40,7 +31,7 @@ interface LocationInputProps {
 }
 
 const LocationInput: React.FC<LocationInputProps> = ({ value, onValueChange, onLocationSelect, placeholder, Icon }) => {
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestions, setSuggestions] = useState<MapboxFeature[]>([]);
   const [isActive, setIsActive] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const debouncedSearchTerm = useDebounce(value, 300);
@@ -50,8 +41,10 @@ const LocationInput: React.FC<LocationInputProps> = ({ value, onValueChange, onL
       const fetchSuggestions = async () => {
         try {
           const data = await getGeocode(debouncedSearchTerm);
-          if (data && data.results) {
-            setSuggestions(data.results);
+          if (data && data.features) {
+            setSuggestions(data.features);
+          } else {
+            setSuggestions([]);
           }
         } catch (error) {
           console.error('Error fetching geocode suggestions:', error);
@@ -89,24 +82,20 @@ const LocationInput: React.FC<LocationInputProps> = ({ value, onValueChange, onL
       {isActive && suggestions.length > 0 && (
         <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
           <ul className="py-1">
-            {suggestions.map((suggestion) => {
-              const displayText = suggestion.poi?.name || suggestion.address.freeformAddress;
-              return (
-                <li
-                  key={suggestion.id}
-                  className="p-2 hover:bg-gray-200 cursor-pointer"
-                  onClick={() => {
-                    onValueChange(displayText);
-                    onLocationSelect([suggestion.position.lon, suggestion.position.lat]);
-                    setSuggestions([]);
-                    setIsActive(false);
-                  }}
-                >
-                  {displayText}
-                  {suggestion.poi && <span className="text-xs text-gray-500 ml-2">({suggestion.address.freeformAddress})</span>}
-                </li>
-              );
-            })}
+            {suggestions.map((suggestion) => (
+              <li
+                key={suggestion.id}
+                className="px-4 py-2 hover:bg-gray-100 cursor-pointer"
+                onClick={() => {
+                  onValueChange(suggestion.place_name);
+                  onLocationSelect(suggestion.center as [number, number]);
+                  setSuggestions([]);
+                  setIsActive(false);
+                }}
+              >
+                {suggestion.place_name}
+              </li>
+            ))}
           </ul>
         </div>
       )}
