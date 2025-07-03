@@ -67,9 +67,9 @@ export interface AreaComparisonData {
  * Represents a single data point for a congestion heatmap.
  */
 export interface HeatmapDataPoint {
-  area: string;
-  congestion: number; // Percentage
-  trend: 'up' | 'down' | 'stable';
+  lat: number;
+  lng: number;
+  weight: number;
 }
 
 /**
@@ -98,12 +98,74 @@ export interface RouteInstruction {
 }
 
 /**
- * Represents a traffic incident on a route.
+ * Represents a traffic incident on a route, matching the TomTom API structure.
  */
 export interface TrafficIncident {
-  summary: string; // e.g., 'CONSTRUCTION', 'JAM'
-  details: string; // TomTom-specific incident ID
-  position: { lat: number; lng: number };
+  type: 'Feature';
+  properties: {
+    id: string;
+    iconCategory: string;
+    magnitudeOfDelay: number;
+    from: string;
+    to: string;
+    length: number;
+    delay: number;
+    roadNumbers: string[];
+    aci: {
+      probabilityOfOccurrence: string;
+      numberOfReports: number;
+      lastReportTime: string;
+    };
+  };
+  geometry: {
+    type: 'LineString';
+    coordinates: number[][];
+  };
+}
+
+/**
+ * Represents a raw route object from the TomTom API, combining all known properties.
+ */
+export interface TomTomRoute {
+  summary: {
+    lengthInMeters: number;
+    travelTimeInSeconds: number;
+    trafficDelayInSeconds: number;
+    departureTime: string;
+    arrivalTime: string;
+    trafficIncidents?: TrafficIncident[];
+  };
+  legs: {
+    points: { latitude: number; longitude: number }[];
+    instructions?: { message: string }[];
+  }[];
+  sections: {
+    startPointIndex: number;
+    endPointIndex: number;
+    sectionType: string;
+    simpleCategory?: string;
+    effectiveSpeedInKmh?: number;
+    trafficDelayInSeconds?: number;
+  }[];
+  guidance?: {
+    instructions: {
+      message?: string;
+      instruction?: string;
+      street?: string;
+      turnAngle?: number;
+    }[];
+  };
+  [key: string]: any; // Allow other properties for flexibility
+}
+
+/**
+ * Represents a route that has been scored and selected.
+ */
+export interface ScoredRoute {
+  route: TomTomRoute;
+  score: number;
+  confidence: number;
+  [key: string]: any; // Allow other properties for flexibility
 }
 
 /**
