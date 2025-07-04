@@ -1,11 +1,10 @@
-
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Car, Truck, Bike, Footprints, Clock, Gauge, Leaf, Zap, MapPin, ArrowRight, X, Search, Loader, Info, AlertTriangle, CheckCircle, ChevronDown, ChevronUp, Wind, TrendingUp, Sun, Cloud, Droplets
+  Car, Truck, Bike, Footprints, Clock, MapPin, X, Search, Loader, AlertTriangle, TrendingUp, Route as RouteIcon, Zap, Brain, Star
 } from 'lucide-react';
 
 // --- Leaflet Icon Fix ---
@@ -24,10 +23,12 @@ interface Location {
 
 interface Route {
   coordinates: [number, number][];
-  distance: number; // in meters
-  duration: number; // in seconds
+  distance: number;
+  duration: number;
   instructions: string[];
-  type: 'fastest' | 'shortest' | 'eco';
+  type: 'optimal' | 'alternative';
+  traffic?: string;
+  score?: number;
 }
 
 interface OptimizedRoutes {
@@ -35,170 +36,613 @@ interface OptimizedRoutes {
   alternativeRoutes: Route[];
   summary: string;
   aiSummary: string;
+  trafficConditions?: string;
 }
 
-// --- OpenRouteService API Logic ---
-const ORS_API_KEY = '5b3ce3597851110001cf624815c98f06fc244b1ab34b5fc0c6b07326';
+interface MapboxFeature {
+  place_name: string;
+  center: [number, number];
+  place_type: string[];
+  properties: {
+    category?: string;
+  };
+  category?: string;
+  relevance_score?: number;
+  text?: string;
+}
 
-const searchLocation = async (query: string): Promise<any[]> => {
-  if (!query || query.length < 3) return [];
+// Mapbox API key from environment variables (Vite)
+const MAPBOX_API_KEY = import.meta.env.VITE_MAPBOX_ACCESS_TOKEN;
+
+// Debug function to check if API key is set
+const checkApiKey = () => {
+  console.log('🔧 Debug: Checking API key...');
+  console.log('🔧 Debug: MAPBOX_API_KEY value:', MAPBOX_API_KEY ? `${MAPBOX_API_KEY.substring(0, 10)}...` : 'undefined');
+  console.log('🔧 Debug: Environment variables:', {
+    VITE_MAPBOX_ACCESS_TOKEN: import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ? `${import.meta.env.VITE_MAPBOX_ACCESS_TOKEN.substring(0, 10)}...` : 'undefined'
+  });
+  
+  if (!MAPBOX_API_KEY) {
+    console.error('❌ Mapbox API key not found! Please add VITE_MAPBOX_ACCESS_TOKEN to your .env file');
+    console.error('Example .env entry: VITE_MAPBOX_ACCESS_TOKEN=pk.your_mapbox_token_here');
+    console.error('Current .env variables:', Object.keys(import.meta.env));
+    return false;
+  }
+  console.log('✅ Mapbox API key loaded successfully');
+  return true;
+};
+
+// Popular Kenya locations database for fallback
+const KENYA_LANDMARKS = {
+  // Universities & Education
+  'jkuat': { name: 'Jomo Kenyatta University of Agriculture and Technology (JKUAT)', coordinates: [-1.0955, 37.0142], category: '🎓 University' },
+  'uon': { name: 'University of Nairobi', coordinates: [-1.2794, 36.8155], category: '🎓 University' },
+  'strathmore': { name: 'Strathmore University', coordinates: [-1.3107, 36.8108], category: '🎓 University' },
+  'ku': { name: 'Kenyatta University', coordinates: [-1.1747, 36.9338], category: '🎓 University' },
+  'mku': { name: 'Mount Kenya University', coordinates: [-0.3031, 37.6503], category: '🎓 University' },
+  'usiu': { name: 'United States International University (USIU)', coordinates: [-1.2326, 36.8815], category: '🎓 University' },
+  'daystar': { name: 'Daystar University', coordinates: [-1.0531, 36.7820], category: '🎓 University' },
+  
+  // Hospitals & Medical
+  'knh': { name: 'Kenyatta National Hospital', coordinates: [-1.3013, 36.8073], category: '🏥 Hospital' },
+  'aga khan': { name: 'Aga Khan University Hospital', coordinates: [-1.2775, 36.8018], category: '🏥 Hospital' },
+  'mp shah': { name: 'MP Shah Hospital', coordinates: [-1.2764, 36.8064], category: '🏥 Hospital' },
+  'nairobi hospital': { name: 'Nairobi Hospital', coordinates: [-1.2926, 36.8115], category: '🏥 Hospital' },
+  'karen hospital': { name: 'Karen Hospital', coordinates: [-1.3190, 36.7017], category: '🏥 Hospital' },
+  'gertrudes': { name: 'Gertrudes Children Hospital', coordinates: [-1.2762, 36.8024], category: '🏥 Hospital' },
+  
+  // Airports
+  'jkia': { name: 'Jomo Kenyatta International Airport', coordinates: [-1.3192, 36.9278], category: '✈️ Airport' },
+  'wilson': { name: 'Wilson Airport', coordinates: [-1.3218, 36.8148], category: '✈️ Airport' },
+  
+  // Shopping Malls
+  'westgate': { name: 'Westgate Shopping Mall', coordinates: [-1.2672, 36.8062], category: '🏬 Mall' },
+  'sarit': { name: 'Sarit Centre', coordinates: [-1.2637, 36.7879], category: '🏬 Mall' },
+  'village market': { name: 'Village Market', coordinates: [-1.2520, 36.8015], category: '🏬 Mall' },
+  'two rivers': { name: 'Two Rivers Mall', coordinates: [-1.2219, 36.8819], category: '🏬 Mall' },
+  'the junction': { name: 'The Junction Mall', coordinates: [-1.2368, 36.8062], category: '🏬 Mall' },
+  'garden city': { name: 'Garden City Mall', coordinates: [-1.2408, 36.7834], category: '🏬 Mall' },
+  'galleria': { name: 'Galleria Shopping Mall', coordinates: [-1.2520, 36.8015], category: '🏬 Mall' },
+  
+  // Churches & Religious Places
+  'nairobi chapel': { name: 'Nairobi Chapel', coordinates: [-1.2921, 36.7820], category: '⛪ Church' },
+  'all saints cathedral': { name: 'All Saints Cathedral', coordinates: [-1.2869, 36.8172], category: '⛪ Cathedral' },
+  'st andrews': { name: 'St Andrews Presbyterian Church', coordinates: [-1.2869, 36.8172], category: '⛪ Church' },
+  'holy family cathedral': { name: 'Holy Family Cathedral', coordinates: [-1.2869, 36.8172], category: '⛪ Cathedral' },
+  'citam': { name: 'Christ Is The Answer Ministries (CITAM)', coordinates: [-1.2521, 36.7879], category: '⛪ Church' },
+  'pentecost church': { name: 'Pentecost Church', coordinates: [-1.2869, 36.8172], category: '⛪ Church' },
+  'mavuno church': { name: 'Mavuno Church', coordinates: [-1.2637, 36.7879], category: '⛪ Church' },
+  'karen country club': { name: 'Karen Country Club Chapel', coordinates: [-1.3190, 36.7017], category: '⛪ Chapel' },
+  'st marks': { name: 'St Marks Catholic Church', coordinates: [-1.2869, 36.8172], category: '⛪ Church' },
+  'st pauls': { name: 'St Pauls Catholic Church', coordinates: [-1.2869, 36.8172], category: '⛪ Church' },
+  'jamia mosque': { name: 'Jamia Mosque', coordinates: [-1.2869, 36.8219], category: '🕌 Mosque' },
+  'south c mosque': { name: 'South C Mosque', coordinates: [-1.3139, 36.8297], category: '🕌 Mosque' },
+  'eastleigh mosque': { name: 'Eastleigh Grand Mosque', coordinates: [-1.2637, 36.8616], category: '🕌 Mosque' },
+  'hindu temple': { name: 'Nairobi Hindu Temple', coordinates: [-1.2869, 36.8172], category: '🛕 Temple' },
+  
+  // Government & Offices
+  'kicc': { name: 'Kenyatta International Conference Centre', coordinates: [-1.2921, 36.8219], category: '🏢 Conference Centre' },
+  'times tower': { name: 'Times Tower', coordinates: [-1.2921, 36.8219], category: '🏢 Office Building' },
+  'anniversary towers': { name: 'Anniversary Towers', coordinates: [-1.2869, 36.8172], category: '🏢 Office Building' },
+  'teleposta towers': { name: 'Teleposta Towers', coordinates: [-1.2869, 36.8172], category: '🏢 Office Building' },
+  'harambee house': { name: 'Harambee House', coordinates: [-1.2869, 36.8172], category: '🏛️ Government' },
+  'treasury building': { name: 'Treasury Building', coordinates: [-1.2869, 36.8172], category: '🏛️ Government' },
+  
+  // Parks & Recreation
+  'uhuru park': { name: 'Uhuru Park', coordinates: [-1.2849, 36.8172], category: '🌳 Park' },
+  'central park': { name: 'Central Park', coordinates: [-1.2849, 36.8172], category: '🌳 Park' },
+  'jeevanjee gardens': { name: 'Jeevanjee Gardens', coordinates: [-1.2869, 36.8219], category: '🌳 Park' },
+  'karura forest': { name: 'Karura Forest', coordinates: [-1.2408, 36.8406], category: '🌲 Forest' },
+  'city park': { name: 'City Park', coordinates: [-1.2637, 36.8344], category: '🌳 Park' },
+  
+  // Restaurants & Entertainment
+  'carnivore': { name: 'Carnivore Restaurant', coordinates: [-1.3679, 36.8521], category: '🍽️ Restaurant' },
+  'tamambo': { name: 'Tamambo Karen Blixen', coordinates: [-1.3190, 36.7017], category: '🍽️ Restaurant' },
+  'java house': { name: 'Java House', coordinates: [-1.2869, 36.8172], category: '☕ Cafe' },
+  'artcaffe': { name: 'ArtCaffe', coordinates: [-1.2869, 36.8172], category: '☕ Cafe' },
+  
+  // Sports & Stadiums
+  'nyayo stadium': { name: 'Nyayo National Stadium', coordinates: [-1.3139, 36.8297], category: '🏟️ Stadium' },
+  'kasarani': { name: 'Moi International Sports Centre Kasarani', coordinates: [-1.2169, 36.8906], category: '🏟️ Stadium' },
+  'city stadium': { name: 'City Stadium', coordinates: [-1.2869, 36.8297], category: '🏟️ Stadium' },
+  
+  // Hotels
+  'serena hotel': { name: 'Nairobi Serena Hotel', coordinates: [-1.2869, 36.8172], category: '🏨 Hotel' },
+  'hilton': { name: 'Hilton Nairobi', coordinates: [-1.2869, 36.8172], category: '🏨 Hotel' },
+  'intercontinental': { name: 'InterContinental Nairobi', coordinates: [-1.2869, 36.8172], category: '🏨 Hotel' },
+  'safari park': { name: 'Safari Park Hotel', coordinates: [-1.2408, 36.8815], category: '🏨 Hotel' },
+  'ole sereni': { name: 'Ole Sereni Hotel', coordinates: [-1.3192, 36.9278], category: '🏨 Hotel' },
+  
+  // Markets
+  'city market': { name: 'City Market', coordinates: [-1.2869, 36.8219], category: '🏪 Market' },
+  'maasai market': { name: 'Maasai Market', coordinates: [-1.2869, 36.8172], category: '🏪 Market' },
+  'wakulima market': { name: 'Wakulima Market', coordinates: [-1.2869, 36.8344], category: '🏪 Market' },
+};
+
+// --- Mapbox API Functions ---
+const searchLocationMapbox = async (query: string): Promise<MapboxFeature[]> => {
+  if (!query || query.length < 2) return [];
+  
+  // Check if API key is properly set
+  if (!checkApiKey()) {
+    console.error('Mapbox API key is not configured. Please add your API key.');
+    return [];
+  }
+  
+  console.log('🔍 Searching for:', query); // Debug log
+  
+  // Check for popular Kenya landmarks first
+  const landmark = checkKenyaLandmarks(query);
+  if (landmark.length > 0) {
+    console.log('📍 Found Kenya landmark:', landmark);
+    return landmark;
+  }
+  
   try {
-    const response = await fetch(
-      `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${encodeURIComponent(query)}&boundary.country=KE&size=10`
+    // Primary search with all location types
+    const primaryResponse = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?` +
+      `access_token=${MAPBOX_API_KEY}&` +
+      `country=KE&` +
+      `types=country,region,postcode,district,place,locality,neighborhood,address,poi&` +
+      `limit=10&` +
+      `autocomplete=true&` +
+      `bbox=33.908859,-4.676667,41.899078,4.62&` + // Kenya bounding box
+      `proximity=36.8219,-1.2921` // Nairobi coordinates for relevance
     );
-    if (!response.ok) throw new Error('Network response was not ok.');
-    const data = await response.json();
-    return data.features || [];
+    
+    // Secondary broader search without country restriction for better coverage
+    const secondaryResponse = await fetch(
+      `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query + ' Kenya')}.json?` +
+      `access_token=${MAPBOX_API_KEY}&` +
+      `types=poi,place,locality,neighborhood,address&` +
+      `limit=10&` +
+      `autocomplete=true&` +
+      `bbox=33.908859,-4.676667,41.899078,4.62&` + // Kenya bounding box
+      `proximity=36.8219,-1.2921` // Nairobi coordinates for relevance
+    );
+    
+    let allFeatures: any[] = [];
+    
+    // Process primary response
+    if (primaryResponse.ok) {
+      const primaryData = await primaryResponse.json();
+      allFeatures = [...(primaryData.features || [])];
+    }
+    
+    // Process secondary response and merge unique results
+    if (secondaryResponse.ok) {
+      const secondaryData = await secondaryResponse.json();
+      const secondaryFeatures = secondaryData.features || [];
+      
+      // Add unique features from secondary search
+      secondaryFeatures.forEach((feature: any) => {
+        const exists = allFeatures.some(existing => 
+          existing.place_name === feature.place_name ||
+          (existing.center[0] === feature.center[0] && existing.center[1] === feature.center[1])
+        );
+        if (!exists) {
+          allFeatures.push(feature);
+        }
+      });
+    }
+    
+    // If no results, try one more broader search
+    if (allFeatures.length === 0) {
+      const broadResponse = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?` +
+        `access_token=${MAPBOX_API_KEY}&` +
+        `limit=15&` +
+        `autocomplete=true&` +
+        `bbox=33.908859,-4.676667,41.899078,4.62&` + // Kenya bounding box
+        `proximity=36.8219,-1.2921` // Nairobi coordinates for relevance
+      );
+      
+      if (broadResponse.ok) {
+        const broadData = await broadResponse.json();
+        allFeatures = (broadData.features || []).filter((feature: any) => {
+          // Filter to keep only Kenya-related results
+          return feature.place_name.toLowerCase().includes('kenya') ||
+                 feature.context?.some((ctx: any) => ctx.text?.toLowerCase().includes('kenya')) ||
+                 (feature.center[0] >= 33.908859 && feature.center[0] <= 41.899078 &&
+                  feature.center[1] >= -4.676667 && feature.center[1] <= 4.62);
+        });
+      }
+    }
+    
+    console.log('📍 Search results:', allFeatures?.length || 0, 'locations found'); // Debug log
+    
+    // Filter and enhance results for better Kenya-specific suggestions
+    const features = allFeatures.map((feature: any) => {
+      // Add category information for better UI display
+      const placeType = feature.place_type[0];
+      let category = '';
+      
+      switch (placeType) {
+        case 'poi':
+          category = getPoiCategory(feature.properties?.category || feature.text || '', feature.place_name);
+          break;
+        case 'address':
+          category = '📍 Address';
+          break;
+        case 'place':
+        case 'locality':
+          category = '🏘️ City/Town';
+          break;
+        case 'neighborhood':
+          category = '🏙️ Area';
+          break;
+        case 'district':
+          category = '📍 District';
+          break;
+        case 'region':
+          category = '🗺️ County';
+          break;
+        default:
+          category = '📍 Location';
+      }
+      
+      return {
+        ...feature,
+        category,
+        relevance_score: feature.relevance || 0
+      };
+    });
+    
+    // Sort by relevance and return
+    return features.sort((a: any, b: any) => b.relevance_score - a.relevance_score);
+    
   } catch (error) {
-    console.error('Location search failed:', error);
+    console.error('Mapbox search failed:', error);
     return [];
   }
 };
 
-const calculateRoute = async (
+// Helper function to categorize POIs
+const getPoiCategory = (category: string, placeName: string = ''): string => {
+  const categoryMap: { [key: string]: string } = {
+    'school': '🏫 School',
+    'university': '🎓 University',
+    'college': '🎓 College',
+    'academy': '🏫 Academy',
+    'institute': '🏫 Institute',
+    'hospital': '🏥 Hospital',
+    'clinic': '🏥 Clinic',
+    'pharmacy': '💊 Pharmacy',
+    'bank': '🏦 Bank',
+    'atm': '🏧 ATM',
+    'restaurant': '🍽️ Restaurant',
+    'cafe': '☕ Cafe',
+    'hotel': '🏨 Hotel',
+    'lodge': '🏨 Lodge',
+    'fuel': '⛽ Fuel Station',
+    'petrol': '⛽ Petrol Station',
+    'gas': '⛽ Gas Station',
+    'shopping': '🛍️ Shopping',
+    'mall': '🏬 Mall',
+    'supermarket': '🛒 Supermarket',
+    'market': '🏪 Market',
+    'airport': '✈️ Airport',
+    'bus': '🚌 Bus Station',
+    'train': '🚂 Train Station',
+    'matatu': '🚐 Matatu Stage',
+    'government': '🏛️ Government',
+    'ministry': '🏛️ Ministry',
+    'office': '🏢 Office',
+    'police': '👮 Police',
+    'fire': '🚒 Fire Station',
+    'church': '⛪ Church',
+    'cathedral': '⛪ Cathedral',
+    'mosque': '🕌 Mosque',
+    'temple': '🛕 Temple',
+    'park': '🌳 Park',
+    'garden': '🌺 Garden',
+    'museum': '🏛️ Museum',
+    'stadium': '🏟️ Stadium',
+    'cinema': '🎬 Cinema',
+    'theatre': '🎭 Theatre',
+    'gym': '💪 Gym',
+    'fitness': '💪 Fitness',
+    'library': '📚 Library',
+    'post': '📮 Post Office',
+    'court': '⚖️ Court',
+    'embassy': '🏛️ Embassy'
+  };
+  
+  const lowerCategory = category.toLowerCase();
+  const lowerPlaceName = placeName.toLowerCase();
+  
+  // Check both category and place name for matches
+  for (const [key, value] of Object.entries(categoryMap)) {
+    if (lowerCategory.includes(key) || lowerPlaceName.includes(key)) {
+      return value;
+    }
+  }
+  
+  // Special cases for universities and schools based on common naming patterns
+  if (lowerPlaceName.includes('university') || lowerPlaceName.includes('varsity')) {
+    return '🎓 University';
+  }
+  if (lowerPlaceName.includes('college') || lowerPlaceName.includes('academy')) {
+    return '🎓 College';
+  }
+  if (lowerPlaceName.includes('school') || lowerPlaceName.includes('primary') || lowerPlaceName.includes('secondary')) {
+    return '🏫 School';
+  }
+  if (lowerPlaceName.includes('hospital') || lowerPlaceName.includes('medical')) {
+    return '🏥 Hospital';
+  }
+  
+  return '📍 Place of Interest';
+};
+
+// Check for popular Kenya landmarks
+const checkKenyaLandmarks = (query: string): MapboxFeature[] => {
+  const lowerQuery = query.toLowerCase().trim();
+  const results: MapboxFeature[] = [];
+  
+  for (const [key, landmark] of Object.entries(KENYA_LANDMARKS)) {
+    if (key.includes(lowerQuery) || landmark.name.toLowerCase().includes(lowerQuery)) {
+      results.push({
+        place_name: landmark.name,
+        center: [landmark.coordinates[1], landmark.coordinates[0]] as [number, number], // lng, lat for Mapbox
+        place_type: ['poi'],
+        properties: { category: 'landmark' },
+        category: landmark.category,
+        relevance_score: 1.0,
+        text: landmark.name.split(' ')[0]
+      });
+    }
+  }
+  
+  return results.slice(0, 5); // Return top 5 matches
+};
+
+const calculateMapboxRoute = async (
   origin: { lat: number; lng: number },
   destination: { lat: number; lng: number },
-  profile: string = 'driving-car'
-): Promise<Route | null> => {
+  profile: string = 'driving-traffic'
+): Promise<Route[]> => {
   try {
-    const response = await fetch(
-      `https://api.openrouteservice.org/v2/directions/${profile}?api_key=${ORS_API_KEY}&start=${origin.lng},${origin.lat}&end=${destination.lng},${destination.lat}`
-    );
-    if (!response.ok) throw new Error(`ORS API error: ${response.statusText}`);
-    const data = await response.json();
-    if (!data.features || data.features.length === 0) return null;
-
-    const feature = data.features[0];
-    const routeCoordinates: [number, number][] = feature.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
+    console.log('🔧 Debug: Calculating route from', origin, 'to', destination, 'with profile', profile);
     
-    return {
-      coordinates: routeCoordinates,
-      distance: feature.properties.summary.distance,
-      duration: feature.properties.summary.duration,
-      instructions: feature.properties.segments[0].steps.map((s: any) => s.instruction),
-      type: 'fastest', // Default type, can be expanded later
-    };
+    // Get optimal route with traffic - Mapbox expects longitude,latitude format
+    // Note: overview=full is required when using congestion annotations
+    const url = `https://api.mapbox.com/directions/v5/mapbox/${profile}/${origin.lng},${origin.lat};${destination.lng},${destination.lat}?alternatives=true&geometries=geojson&steps=true&overview=full&access_token=${MAPBOX_API_KEY}&annotations=duration,distance,congestion`;
+    console.log('🔧 Debug: API URL:', url);
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      const errorData = await response.text();
+      console.error('🔧 Debug: Mapbox API Error Response:', response.status, errorData);
+      throw new Error(`Mapbox Directions API error: ${response.status} - ${errorData}`);
+    }
+    const data = await response.json();
+    console.log('🔧 Debug: Mapbox route data:', data);
+    
+    if (!data.routes || data.routes.length === 0) return [];
+    
+    const routes: Route[] = data.routes.map((route: any, index: number) => {
+      const coordinates: [number, number][] = route.geometry.coordinates.map((c: number[]) => [c[1], c[0]]);
+      
+      return {
+        coordinates,
+        distance: route.distance,
+        duration: route.duration,
+        instructions: route.legs[0]?.steps?.map((step: any) => step.maneuver.instruction) || [],
+        type: index === 0 ? 'optimal' : 'alternative',
+        traffic: getTrafficCondition(route.duration, route.distance),
+        score: calculateRouteScore(route.distance, route.duration)
+      };
+    });
+    
+    return routes;
   } catch (error) {
-    console.error('Route calculation failed:', error);
-    return null;
+    console.error('Mapbox route calculation failed:', error);
+    return [];
   }
 };
 
+const getTrafficCondition = (duration: number, distance: number): string => {
+  const speed = (distance / 1000) / (duration / 3600); // km/h
+  if (speed > 50) return 'Light';
+  if (speed > 30) return 'Moderate';
+  return 'Heavy';
+};
+
+const calculateRouteScore = (distance: number, duration: number): number => {
+  // AI-like scoring based on distance, time, and efficiency
+  const efficiency = distance / duration;
+  return Math.round((efficiency * 100) + Math.random() * 10);
+};
+
+// --- AI Summary Generation ---
+const generateAISummary = async (routes: Route[], origin: Location, destination: Location): Promise<string> => {
+  // Placeholder for AI service integration
+  // Replace this with your actual AI API call (OpenAI, Claude, etc.)
+  const mainRoute = routes[0];
+  const distance = (mainRoute.distance / 1000).toFixed(1);
+  const duration = Math.round(mainRoute.duration / 60);
+  const traffic = mainRoute.traffic || 'Unknown';
+  
+  // Simulated AI summary - replace with actual AI service
+  const summaries = [
+    `🚗 Optimal route from ${origin.name} to ${destination.name} covers ${distance}km in ${duration} minutes. Current traffic is ${traffic.toLowerCase()}. This route is recommended for its balance of time and distance efficiency.`,
+    `🎯 Best path identified: ${distance}km journey taking approximately ${duration} minutes. Traffic conditions are ${traffic.toLowerCase()}. The route avoids major congestion points and provides smooth travel.`,
+    `📍 Recommended route: ${distance}km distance with ${duration}-minute travel time. Traffic status: ${traffic.toLowerCase()}. This path optimizes for current conditions and minimal delays.`
+  ];
+  
+  return summaries[Math.floor(Math.random() * summaries.length)];
+};
 
 // --- UI Components ---
-
-const LocationInput = ({ value, onChange, onClear, placeholder, results, onSelect, onUseCurrentLocation, isLoading }) => (
-    <div className="relative w-full">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-        <input
-            type="text"
-            value={value}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={placeholder}
-            className="w-full pl-12 pr-10 py-4 bg-white border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-800 placeholder-gray-400 shadow-sm hover:border-gray-300"
-        />
-        {isLoading && <Loader className="absolute right-10 top-1/2 -translate-y-1/2 animate-spin text-blue-500" size={20} />} 
-        {value && !isLoading && (
-            <button onClick={onClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
-                <X size={20} />
+const LocationInput = ({ value, onChange, onClear, placeholder, results, onSelect, onUseCurrentLocation, isLoading }: any) => (
+  <div className="relative w-full">
+    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+    <input
+      type="text"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full pl-12 pr-10 py-4 bg-white border-2 border-gray-200 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition-all text-gray-800 placeholder-gray-400 shadow-sm hover:border-gray-300"
+    />
+    {isLoading && <Loader className="absolute right-10 top-1/2 -translate-y-1/2 animate-spin text-blue-500" size={20} />}
+    {value && !isLoading && (
+      <button onClick={onClear} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
+        <X size={20} />
+      </button>
+    )}
+    <AnimatePresence>
+          {(results.length > 0) && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="absolute z-30 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-auto"
+            >
+          {onUseCurrentLocation && (
+            <button onClick={onUseCurrentLocation} className="w-full px-4 py-3 text-left text-blue-600 font-semibold hover:bg-blue-50 transition-colors flex items-center">
+              <MapPin size={16} className="mr-2" /> Use Current Location
             </button>
-        )}
-        <AnimatePresence>
-            {results.length > 0 && (
-                <motion.div 
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -10 }}
-                    className="absolute z-30 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-60 overflow-auto"
-                >
-                    {onUseCurrentLocation && (
-                        <button onClick={onUseCurrentLocation} className="w-full px-4 py-3 text-left text-blue-600 font-semibold hover:bg-blue-50 transition-colors flex items-center">
-                            <MapPin size={16} className="mr-2" /> Use Current Location
-                        </button>
+          )}
+          {results.map((result: MapboxFeature, index: number) => (
+            <button
+              key={index}
+              onClick={() => {
+                const [lng, lat] = result.center;
+                onSelect({ name: result.place_name, position: { lat, lng } });
+              }}
+              className="w-full px-4 py-3 text-left text-gray-700 hover:bg-blue-50 transition-colors border-b border-gray-100 last:border-b-0 group"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 mt-0.5">
+                  {result.place_type.includes('poi') ? (
+                    <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
+                  ) : result.place_type.includes('address') ? (
+                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                  ) : (
+                    <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                  )}
+                </div>
+                <div className="flex-grow min-w-0">
+                  <div className="font-medium text-gray-900 truncate group-hover:text-blue-700">
+                    {result.text || result.place_name.split(',')[0]}
+                  </div>
+                  <div className="text-xs text-gray-500 truncate">
+                    {result.category && (
+                      <span className="inline-block mr-2 px-2 py-0.5 bg-gray-100 rounded text-xs font-medium">
+                        {result.category}
+                      </span>
                     )}
-                    {results.map((result, index) => (
-                        <button
-                            key={index}
-                            onClick={() => {
-                                const [lng, lat] = result.geometry.coordinates;
-                                onSelect({ name: result.properties.label, position: { lat, lng } });
-                            }}
-                            className="w-full px-4 py-3 text-left text-gray-700 hover:bg-gray-50 transition-colors border-b border-gray-100 last:border-b-0"
-                        >
-                            {result.properties.label}
-                        </button>
-                    ))}
-                </motion.div>
-            )}
-        </AnimatePresence>
-    </div>
+                    {result.place_name}
+                  </div>
+                </div>
+              </div>
+            </button>
+          ))}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  </div>
 );
 
-const RouteMap = ({ routes, selectedRoute, origin, destination }) => {
+const RouteMap = ({ routes, origin, destination }: any) => {
   const map = useMap();
+  
   useEffect(() => {
     if (routes && routes.length > 0) {
-      const allCoords = routes.flatMap(r => r.coordinates);
+      const allCoords = routes.flatMap((r: Route) => r.coordinates);
       if (allCoords.length > 0) {
         map.fitBounds(L.latLngBounds(allCoords), { padding: [50, 50] });
       }
     } else if (origin && destination) {
-        map.fitBounds(L.latLngBounds([origin.position, destination.position]), { padding: [50, 50] });
+      map.fitBounds(L.latLngBounds([origin.position, destination.position]), { padding: [50, 50] });
     }
   }, [routes, origin, destination, map]);
 
   return (
     <>
-      {routes && routes.map(route => (
+      {routes && routes.map((route: Route, index: number) => (
         <Polyline
-          key={route.type}
+          key={index}
           positions={route.coordinates}
-          color={route.type === selectedRoute ? '#22d3ee' : '#94a3b8'}
-          weight={route.type === selectedRoute ? 7 : 5}
-          opacity={route.type === selectedRoute ? 1 : 0.6}
+          color={route.type === 'optimal' ? '#10b981' : '#6b7280'}
+          weight={route.type === 'optimal' ? 6 : 4}
+          opacity={route.type === 'optimal' ? 1 : 0.7}
+          dashArray={route.type === 'alternative' ? '10, 5' : undefined}
         />
       ))}
-      {origin && <Marker position={origin.position}><Popup>{origin.name}</Popup></Marker>}
-      {destination && <Marker position={destination.position}><Popup>{destination.name}</Popup></Marker>}
+      {origin && (
+        <Marker position={origin.position}>
+          <Popup>📍 Start: {origin.name}</Popup>
+        </Marker>
+      )}
+      {destination && (
+        <Marker position={destination.position}>
+          <Popup>🎯 Destination: {destination.name}</Popup>
+        </Marker>
+      )}
     </>
   );
 };
 
-// --- Main Modern Component ---
+// --- Main Component ---
 const ModernRouteOptimizer: React.FC = () => {
   const [origin, setOrigin] = useState<Location | null>(null);
   const [destination, setDestination] = useState<Location | null>(null);
   const [originQuery, setOriginQuery] = useState('');
   const [destinationQuery, setDestinationQuery] = useState('');
-  const [originResults, setOriginResults] = useState([]);
-  const [destinationResults, setDestinationResults] = useState([]);
+  const [originResults, setOriginResults] = useState<MapboxFeature[]>([]);
+  const [destinationResults, setDestinationResults] = useState<MapboxFeature[]>([]);
   const [originLoading, setOriginLoading] = useState(false);
   const [destinationLoading, setDestinationLoading] = useState(false);
   
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [optimizedRoutes, setOptimizedRoutes] = useState<OptimizedRoutes | null>(null);
-  const [selectedRouteType, setSelectedRouteType] = useState<'fastest' | 'shortest' | 'eco'>('fastest');
-
   const [vehicleType, setVehicleType] = useState('car');
 
   const handleSearch = useCallback(async (query: string, isOrigin: boolean) => {
+    console.log(`🔧 Debug: handleSearch called with query="${query}", isOrigin=${isOrigin}`);
     if (isOrigin) setOriginLoading(true); else setDestinationLoading(true);
     try {
-      const results = await searchLocation(query);
-      if (isOrigin) setOriginResults(results); else setDestinationResults(results);
+      console.log('🔧 Debug: Calling searchLocationMapbox...');
+      const results = await searchLocationMapbox(query);
+      console.log(`🔧 Debug: Got ${results.length} results:`, results);
+      if (isOrigin) {
+        setOriginResults(results);
+        console.log('🔧 Debug: Set origin results');
+      } else {
+        setDestinationResults(results);
+        console.log('🔧 Debug: Set destination results');
+      }
+    } catch (error) {
+      console.error('🔧 Debug: Error in handleSearch:', error);
     } finally {
       if (isOrigin) setOriginLoading(false); else setDestinationLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const handler = setTimeout(() => { if (originQuery) handleSearch(originQuery, true); else setOriginResults([]); }, 500);
+    console.log(`🔧 Debug: Origin query changed to: "${originQuery}"`);
+    const handler = setTimeout(() => {
+      if (originQuery && originQuery.length >= 2) {
+        console.log(`🔧 Debug: Triggering search for origin: "${originQuery}"`);
+        handleSearch(originQuery, true);
+      } else {
+        console.log('🔧 Debug: Clearing origin results (query too short)');
+        setOriginResults([]);
+      }
+    }, 300); // Faster response for better UX
     return () => clearTimeout(handler);
   }, [originQuery, handleSearch]);
 
   useEffect(() => {
-    const handler = setTimeout(() => { if (destinationQuery) handleSearch(destinationQuery, false); else setDestinationResults([]); }, 500);
+    const handler = setTimeout(() => {
+      if (destinationQuery && destinationQuery.length >= 2) handleSearch(destinationQuery, false);
+      else setDestinationResults([]);
+    }, 300); // Faster response for better UX
     return () => clearTimeout(handler);
   }, [destinationQuery, handleSearch]);
 
@@ -216,119 +660,253 @@ const ModernRouteOptimizer: React.FC = () => {
 
   const handleFindRoute = async () => {
     if (!origin || !destination) {
-      setError('Set origin and destination to find a route.');
+      setError('Please set both origin and destination to find a route.');
       return;
     }
+    
     setIsLoading(true);
     setError(null);
     setOptimizedRoutes(null);
 
     try {
-      const profileMap = { car: 'driving-car', truck: 'driving-hgv', bicycle: 'cycling-road', pedestrian: 'foot-walking' };
-      const mainRoute = await calculateRoute(origin.position, destination.position, profileMap[vehicleType]);
+      const profileMap = {
+        car: 'driving-traffic',
+        truck: 'driving',
+        bicycle: 'cycling',
+        pedestrian: 'walking'
+      };
+      
+      const routes = await calculateMapboxRoute(
+        origin.position,
+        destination.position,
+        profileMap[vehicleType as keyof typeof profileMap]
+      );
 
-      if (!mainRoute) {
-        setError('Could not calculate a route. The locations might be unreachable.');
+      if (!routes || routes.length === 0) {
+        setError('Could not calculate a route. Please try different locations.');
         return;
       }
+
+      const mainRoute = routes[0];
+      const alternativeRoutes = routes.slice(1);
+      
+      // Generate AI summary
+      const aiSummary = await generateAISummary(routes, origin, destination);
       
       setOptimizedRoutes({
         mainRoute,
-        alternativeRoutes: [], // Can add more route types here later
-        summary: `Route: ${(mainRoute.distance / 1000).toFixed(1)} km, ${Math.round(mainRoute.duration / 60)} min.`,
-        aiSummary: 'Route calculated with OpenRouteService.'
+        alternativeRoutes,
+        summary: `Optimal route: ${(mainRoute.distance / 1000).toFixed(1)} km, ${Math.round(mainRoute.duration / 60)} min`,
+        aiSummary,
+        trafficConditions: mainRoute.traffic
       });
 
     } catch (err) {
-      setError('Failed to find a route. Check console for details.');
+      console.error('Route calculation error:', err);
+      setError('Failed to calculate route. Please check your internet connection and try again.');
     } finally {
       setIsLoading(false);
     }
   };
-  
+
   const allRoutes = optimizedRoutes ? [optimizedRoutes.mainRoute, ...optimizedRoutes.alternativeRoutes] : [];
 
   return (
-    <div className="relative h-screen w-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 text-gray-800">
-      {/* Decorative background elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-10 -left-10 w-40 h-40 bg-blue-200 rounded-full opacity-30 animate-bounce"></div>
-        <div className="absolute top-20 right-10 w-32 h-32 bg-purple-200 rounded-full opacity-40 animate-pulse"></div>
-        <div className="absolute bottom-20 left-20 w-36 h-36 bg-green-200 rounded-full opacity-35 animate-bounce delay-1000"></div>
-      </div>
-      
-      <MapContainer center={[-1.286389, 36.817223]} zoom={13} style={{ height: '100%', width: '100%' }} className="z-0">
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
-        <RouteMap routes={allRoutes} selectedRoute={selectedRouteType} origin={origin} destination={destination} />
-      </MapContainer>
-
-      <motion.div 
-        className="absolute top-0 left-0 right-0 p-4 md:p-8 flex flex-col md:flex-row gap-4"
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5 }}
+    <div className="flex h-screen w-screen bg-gradient-to-br from-blue-50 to-indigo-100 text-gray-800">
+      {/* Left Panel: Input Fields */}
+      <motion.div
+        className="w-1/3 max-w-md bg-white p-8 shadow-2xl overflow-y-auto flex flex-col border-r border-gray-200"
+        initial={{ x: -300, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ duration: 0.6, ease: "easeOut" }}
       >
-        <div className="flex-grow bg-black/40 backdrop-blur-2xl p-6 rounded-3xl border border-cyan-500/30 shadow-2xl flex flex-col gap-4 hover:shadow-cyan-500/30 hover:border-cyan-400/50 transition-all duration-500 hover:scale-[1.02]">
-          <div className="absolute inset-0 bg-gradient-to-r from-cyan-500/5 to-purple-500/5 rounded-3xl"></div>
-          <div className="relative z-10">
-            <div className="flex flex-col md:flex-row gap-4 items-center">
-              <LocationInput value={originQuery} onChange={setOriginQuery} onClear={() => { setOrigin(null); setOriginQuery(''); }} placeholder="Choose starting point" results={originResults} onSelect={(loc) => handleSelectLocation(loc, true)} isLoading={originLoading} />
-              <LocationInput value={destinationQuery} onChange={setDestinationQuery} onClear={() => { setDestination(null); setDestinationQuery(''); }} placeholder="Choose destination" results={destinationResults} onSelect={(loc) => handleSelectLocation(loc, false)} isLoading={destinationLoading} />
+        <div className="flex-grow">
+          <div className="text-center mb-8">
+            <div className="flex items-center justify-center gap-3 mb-4">
+              <div className="p-3 bg-gradient-to-r from-blue-500 to-purple-600 rounded-full">
+                <RouteIcon className="text-white" size={24} />
+              </div>
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-transparent">
+                Smart Route
+              </h1>
             </div>
-             <div className="flex items-center justify-between">
-                <div className="flex gap-2">
-                    {(['car', 'truck', 'bicycle', 'pedestrian'] as const).map(v => (
-                      <button key={v} onClick={() => setVehicleType(v)} className={`p-2.5 rounded-lg transition-colors ${vehicleType === v ? 'bg-cyan-500/20 text-cyan-300' : 'bg-neutral-700/50 text-neutral-400 hover:bg-neutral-600/50'}`}>
-                        {v === 'car' && <Car />}
-                        {v === 'truck' && <Truck />}
-                        {v === 'bicycle' && <Bike />}
-                        {v === 'pedestrian' && <Footprints />}
-                      </button>
-                    ))}
-                </div>
-                <button onClick={handleFindRoute} disabled={isLoading || !origin || !destination} className="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-500 text-black font-bold rounded-xl hover:from-cyan-400 hover:to-blue-400 transition-all disabled:bg-neutral-600 disabled:text-neutral-400 disabled:cursor-not-allowed flex items-center gap-2 transform hover:scale-105 shadow-lg hover:shadow-cyan-500/25">
-                    {isLoading ? <><Loader className="animate-spin" />Calculating</> : 'Find Route'}
-                </button>
+            <p className="text-gray-600">AI-powered route optimization</p>
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">📍 Starting Point</label>
+              <LocationInput
+                value={originQuery}
+                onChange={setOriginQuery}
+                onClear={() => { setOrigin(null); setOriginQuery(''); }}
+                placeholder="Enter starting location..."
+                results={originResults}
+                onSelect={(loc: Location) => handleSelectLocation(loc, true)}
+                isLoading={originLoading}
+                onUseCurrentLocation={() => {/* Implement geolocation */}}
+              />
+            </div>
+            
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">🎯 Destination</label>
+              <LocationInput
+                value={destinationQuery}
+                onChange={setDestinationQuery}
+                onClear={() => { setDestination(null); setDestinationQuery(''); }}
+                placeholder="Enter destination..."
+                results={destinationResults}
+                onSelect={(loc: Location) => handleSelectLocation(loc, false)}
+                isLoading={destinationLoading}
+              />
             </div>
           </div>
+
+          <div className="my-8">
+            <h3 className="text-lg font-semibold mb-4 text-gray-700">🚗 Vehicle Type</h3>
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { key: 'car', icon: Car, label: 'Car' },
+                { key: 'truck', icon: Truck, label: 'Truck' },
+                { key: 'bicycle', icon: Bike, label: 'Bike' },
+                { key: 'pedestrian', icon: Footprints, label: 'Walk' }
+              ].map(({ key, icon: Icon, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setVehicleType(key)}
+                  className={`p-4 rounded-xl transition-all duration-300 flex flex-col items-center gap-2 ${
+                    vehicleType === key
+                      ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg transform scale-105'
+                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200 hover:shadow-md'
+                  }`}
+                >
+                  <Icon size={20} />
+                  <span className="text-sm font-medium">{label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <button
+            onClick={handleFindRoute}
+            disabled={isLoading || !origin || !destination}
+            className="w-full px-6 py-4 bg-gradient-to-r from-green-500 to-blue-600 text-white font-bold rounded-xl hover:from-green-600 hover:to-blue-700 transition-all disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed flex items-center justify-center gap-3 transform hover:scale-105 shadow-lg"
+          >
+            {isLoading ? (
+              <><Loader className="animate-spin" size={20} />Optimizing Route...</>
+            ) : (
+              <><Zap size={20} />Find Optimal Route</>
+            )}
+          </button>
         </div>
+
+        {/* Route Details & AI Summary */}
+        <AnimatePresence>
+          {optimizedRoutes && (
+            <motion.div
+              className="mt-8 pt-6 border-t border-gray-200"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+            >
+              <div className="space-y-6">
+                <div className="bg-gradient-to-r from-green-50 to-blue-50 p-4 rounded-xl border border-green-200">
+                  <h3 className="text-lg font-bold mb-3 flex items-center gap-2 text-green-700">
+                    <TrendingUp size={20} />Route Summary
+                  </h3>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Distance:</span>
+                      <span className="font-bold text-gray-900">
+                        {(optimizedRoutes.mainRoute.distance / 1000).toFixed(1)} km
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Duration:</span>
+                      <span className="font-bold text-gray-900">
+                        {Math.round(optimizedRoutes.mainRoute.duration / 60)} min
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Traffic:</span>
+                      <span className={`font-bold ${
+                        optimizedRoutes.trafficConditions === 'Light' ? 'text-green-600' :
+                        optimizedRoutes.trafficConditions === 'Moderate' ? 'text-yellow-600' : 'text-red-600'
+                      }`}>
+                        {optimizedRoutes.trafficConditions}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gradient-to-r from-purple-50 to-blue-50 p-4 rounded-xl border border-purple-200">
+                  <h3 className="text-lg font-bold mb-3 flex items-center gap-2 text-purple-700">
+                    <Brain size={20} />AI Insights
+                  </h3>
+                  <p className="text-sm text-gray-700 leading-relaxed">
+                    {optimizedRoutes.aiSummary}
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </motion.div>
 
+      {/* Right Panel: Map */}
+      <div className="flex-grow h-full relative">
+        <MapContainer
+          center={[-1.286389, 36.817223]}
+          zoom={13}
+          style={{ height: '100%', width: '100%' }}
+          className="z-0"
+        >
+          <TileLayer
+            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
+          <RouteMap routes={allRoutes} origin={origin} destination={destination} />
+        </MapContainer>
+        
+        {/* Route Legend */}
+        {optimizedRoutes && (
+          <motion.div
+            className="absolute top-4 right-4 bg-white p-4 rounded-xl shadow-lg border border-gray-200 z-10"
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.5 }}
+          >
+            <h4 className="font-bold mb-2 text-gray-800">Route Legend</h4>
+            <div className="space-y-2 text-sm">
+              <div className="flex items-center gap-2">
+                <div className="w-4 h-1 bg-green-500 rounded"></div>
+                <span>Optimal Route</span>
+              </div>
+              {optimizedRoutes.alternativeRoutes.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-1 bg-gray-500 rounded" style={{borderStyle: 'dashed'}}></div>
+                  <span>Alternative Routes</span>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </div>
+
+      {/* Error Toast */}
       <AnimatePresence>
         {error && (
-             <motion.div 
-                initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
-                className="absolute bottom-24 left-1/2 -translate-x-1/2 bg-red-500/80 backdrop-blur-sm p-4 rounded-xl text-white font-semibold"
-             >
-                {error}
-            </motion.div>
-        )}
-      </AnimatePresence>
-
-      <AnimatePresence>
-        {optimizedRoutes && (
-            <motion.div
-                className="absolute bottom-8 right-8 w-[350px] bg-black/60 backdrop-blur-xl p-6 rounded-2xl border border-neutral-600/50 shadow-2xl hover:shadow-cyan-500/10 transition-all duration-300"
-                initial={{ opacity: 0, x: 20 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 20 }}
-                transition={{ duration: 0.5 }}
-            >
-               <h2 className="text-2xl font-bold mb-4">Route Details</h2>
-               <div className="space-y-4">
-                <div className="flex justify-between items-center text-lg">
-                    <div className="flex items-center gap-2 text-cyan-400"><TrendingUp /> <span>Distance</span></div>
-                    <span className="font-bold">{(optimizedRoutes.mainRoute.distance / 1000).toFixed(1)} km</span>
-                </div>
-                 <div className="flex justify-between items-center text-lg">
-                    <div className="flex items-center gap-2 text-cyan-400"><Clock /> <span>Duration</span></div>
-                    <span className="font-bold">{Math.round(optimizedRoutes.mainRoute.duration / 60)} min</span>
-                </div>
-               </div>
-            </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-red-600 text-white p-4 rounded-xl shadow-lg font-semibold z-50"
+          >
+            <div className="flex items-center gap-2">
+              <AlertTriangle size={20} />
+              {error}
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

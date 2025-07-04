@@ -204,7 +204,7 @@ const RouteMap = ({ routes, selectedRoute, origin, destination }) => {
   
   useEffect(() => {
     if (routes && routes.length > 0) {
-      
+
       // Fit map to show all route coordinates
       const allCoords = routes.flatMap(route => route.coordinates);
       if (allCoords.length > 0) {
@@ -358,7 +358,7 @@ const OSMRouteOptimizer: React.FC = () => {
       const routes = await Promise.all(routePromises);
       const validRoutes = routes.filter(route => route !== null) as Route[];
 
-      if (validRoutes.length === 0) {
+      if (validRoutes.length === 0) { 
         setError('No route could be calculated. Please try different locations.');
         return;
       }
@@ -400,6 +400,8 @@ const OSMRouteOptimizer: React.FC = () => {
           <p className="text-gray-500">Powered by OpenStreetMap</p>
         </header>
 
+
+
         <div className="space-y-4 flex-grow">
           {/* Location Inputs */}
           <LocationInput
@@ -419,6 +421,8 @@ const OSMRouteOptimizer: React.FC = () => {
             results={destinationResults}
             onSelect={(loc) => handleSelectLocation(loc, false)}
           />
+          
+
 
           {/* Advanced Options */}
           <div className="pt-2">
@@ -484,6 +488,8 @@ const OSMRouteOptimizer: React.FC = () => {
         </div>
       </div>
 
+
+
       {/* Right Panel: Map */}
       <div className="flex-grow bg-gray-200 relative">
         <MapContainer
@@ -506,5 +512,7 @@ const OSMRouteOptimizer: React.FC = () => {
     </div>
   );
 };
+
+
 
 export default OSMRouteOptimizer;
