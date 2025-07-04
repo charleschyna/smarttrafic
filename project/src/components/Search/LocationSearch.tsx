@@ -1,16 +1,16 @@
 import React, { useState } from 'react';
 import { Search, MapPin } from 'lucide-react';
-import * as tt from '@tomtom-international/web-sdk-services';
+import { getGeocode } from '../../services/routingService';
 
 interface LocationSearchProps {
   onLocationSelect: (location: any) => void;
-  apiKey: string;
 }
 
-const LocationSearch: React.FC<LocationSearchProps> = ({ onLocationSelect, apiKey }) => {
+const LocationSearch: React.FC<LocationSearchProps> = ({ onLocationSelect }) => {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [debounceTimeout, setDebounceTimeout] = useState<NodeJS.Timeout | null>(null);
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery.trim()) {
@@ -20,19 +20,39 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ onLocationSelect, apiKe
 
     setIsLoading(true);
     try {
-      const response = await tt.services.fuzzySearch({
-        key: apiKey,
-        query: searchQuery,
-        language: 'en-GB',
-        limit: 5,
-        countrySet: 'KE'
-      });
-      setResults(response.results || []);
+      const data = await getGeocode(searchQuery);
+      const mappedResults = data.features.map((feature: any) => ({
+        address: {
+          freeformAddress: feature.place_name,
+          country: feature.context?.find((c: any) => c.id.startsWith('country'))?.text || '',
+        },
+        position: {
+          lng: feature.center[0],
+          lat: feature.center[1],
+        },
+      }));
+      setResults(mappedResults);
     } catch (error) {
       console.error('Search error:', error);
+      setResults([]); // Clear results on error
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setQuery(value);
+
+    if (debounceTimeout) {
+      clearTimeout(debounceTimeout);
+    }
+
+    const newTimeout = setTimeout(() => {
+      handleSearch(value);
+    }, 300); // 300ms debounce delay
+
+    setDebounceTimeout(newTimeout);
   };
 
   return (
@@ -41,10 +61,7 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ onLocationSelect, apiKe
         <input
           type="text"
           value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            handleSearch(e.target.value);
-          }}
+          onChange={onInputChange}
           placeholder="Search locations..."
           className="w-full px-4 py-2 pl-10 pr-4 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
         />
@@ -84,4 +101,4 @@ const LocationSearch: React.FC<LocationSearchProps> = ({ onLocationSelect, apiKe
   );
 };
 
-export default LocationSearch; 
+export default LocationSearch;
