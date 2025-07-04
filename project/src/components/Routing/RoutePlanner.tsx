@@ -1,19 +1,18 @@
 import React, { useState } from 'react';
 import { Navigation, Plus, X, RotateCcw } from 'lucide-react';
-import * as tt from '@tomtom-international/web-sdk-services';
 import LocationSearch from '../Search/LocationSearch';
+import { getDirections } from '../../services/routingService';
 
 interface RoutePlannerProps {
-  apiKey: string;
   onRouteCalculated: (route: any) => void;
 }
 
 interface Waypoint {
-  position: [number, number];
+  position: { lat: number; lng: number };
   address: string;
 }
 
-const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }) => {
+const RoutePlanner: React.FC<RoutePlannerProps> = ({ onRouteCalculated }) => {
   const [startPoint, setStartPoint] = useState<Waypoint | null>(null);
   const [endPoint, setEndPoint] = useState<Waypoint | null>(null);
   const [viaPoints, setViaPoints] = useState<Waypoint[]>([]);
@@ -34,21 +33,27 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
         startPoint.position,
         ...viaPoints.map(point => point.position),
         endPoint.position
-      ];
+      ].filter(p => p.lat !== 0 && p.lng !== 0); // Filter out unassigned via points
 
-      const result = await tt.services.calculateRoute({
-        key: apiKey,
-        locations,
-        traffic: true,
-        computeBestOrder: true,
-        alternatives: true,
-        instructionsType: 'text',
-        language: 'en-GB'
-      });
+      if (locations.length < 2) {
+        setError('Please set valid start and end points.');
+        setIsCalculating(false);
+        return;
+      }
+
+      const waypoints = locations.map(pos => ({ 
+        latitude: pos.lat, 
+        longitude: pos.lng 
+      }));
+
+      // TODO: The original implementation used `computeBestOrder: true`.
+      // The standard Mapbox Directions API does not optimize waypoint order.
+      // To add this feature, we would need to use the Mapbox Optimization API.
+      const result = await getDirections(waypoints);
 
       onRouteCalculated(result);
-    } catch (err) {
-      setError('Failed to calculate route. Please try again.');
+    } catch (err: any) {
+      setError(err.message || 'Failed to calculate route. Please try again.');
       console.error('Route calculation error:', err);
     } finally {
       setIsCalculating(false);
@@ -57,7 +62,8 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
 
   const addViaPoint = () => {
     if (viaPoints.length < 5) {
-      setViaPoints([...viaPoints, { position: [0, 0], address: '' }]);
+      // Initialize with a placeholder that can be identified and filtered out if not set
+      setViaPoints([...viaPoints, { position: { lat: 0, lng: 0 }, address: '' }]);
     }
   };
 
@@ -90,10 +96,9 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
             <div className="w-3 h-3 rounded-full bg-green-500" />
           </div>
           <LocationSearch
-            apiKey={apiKey}
             onLocationSelect={(location) => {
               setStartPoint({
-                position: [location.position.lat, location.position.lng],
+                position: location.position,
                 address: location.address.freeformAddress
               });
             }}
@@ -106,11 +111,10 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
               <div className="w-2 h-2 rounded-full bg-blue-500" />
             </div>
             <LocationSearch
-              apiKey={apiKey}
               onLocationSelect={(location) => {
                 const newViaPoints = [...viaPoints];
                 newViaPoints[index] = {
-                  position: [location.position.lat, location.position.lng],
+                  position: location.position,
                   address: location.address.freeformAddress
                 };
                 setViaPoints(newViaPoints);
@@ -130,10 +134,9 @@ const RoutePlanner: React.FC<RoutePlannerProps> = ({ apiKey, onRouteCalculated }
             <div className="w-3 h-3 rounded-full bg-red-500" />
           </div>
           <LocationSearch
-            apiKey={apiKey}
             onLocationSelect={(location) => {
               setEndPoint({
-                position: [location.position.lat, location.position.lng],
+                position: location.position,
                 address: location.address.freeformAddress
               });
             }}
